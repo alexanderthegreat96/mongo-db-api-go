@@ -1,0 +1,29 @@
+# Compiled Object files, Static and Dynamic libs (Shared Objects)
+*.o
+*.a
+*.so
+
+# Folders
+_obj/
+_test/
+_vendor/
+.vscode/
+.idea/
+.DS_Store
+
+# Binary
+main
+
+# Dependency directories
+/vendor/
+/go.sum
+
+# Log files
+*.log
+
+# Environment files
+.env
+
+# Compiled Go binary
+*.exe
+*.exe~
