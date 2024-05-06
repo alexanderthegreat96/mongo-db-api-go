@@ -59,6 +59,7 @@ type MongoResults struct {
 	Count      int64
 	Results    []map[string]interface{}
 	Pagination MongoResultPagination
+	Query      string
 }
 
 // results error
@@ -68,6 +69,7 @@ type MongoError struct {
 	Database string
 	Table    string
 	Error    string
+	Query    string
 }
 
 type MongoOperationsResult struct {
@@ -170,7 +172,6 @@ func (mh *MongoDBHandler) PerPage(perPage int) *MongoDBHandler {
 
 // Where contraint
 func (mh *MongoDBHandler) Where(field string, operator string, value interface{}) *MongoDBHandler {
-
 	if field == "_id" {
 		objectID, err := primitive.ObjectIDFromHex(value.(string))
 		if err != nil {
@@ -326,9 +327,9 @@ func (mh *MongoDBHandler) appendTimestamps(data interface{}) interface{} {
 // can provide 1 or more maps inside
 // a slice
 
-func (mh *MongoDBHandler) Insert(data interface{}) MongoError {
-	if err := mh.getConnection(); err.Status != true {
-		return err
+func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, MongoError) {
+	if err := mh.getConnection(); err.Status {
+		return MongoOperationsResult{}, err
 	}
 
 	if mh.useTimestamps {
@@ -353,23 +354,23 @@ func (mh *MongoDBHandler) Insert(data interface{}) MongoError {
 		}
 		_, err := mh.collection.InsertMany(ctx, interfaceSlice)
 		if err != nil {
-			return mh.newMongoError(500, err.Error())
+			return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 		}
 	case map[string]interface{}:
 		_, err := mh.collection.InsertOne(ctx, d)
 		if err != nil {
-			return mh.newMongoError(500, err.Error())
+			return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 		}
 	default:
-		return mh.newMongoError(400, "unsuported data type")
+		return MongoOperationsResult{}, mh.newMongoError(400, "unsuported data type")
 	}
 
-	return MongoError{}
+	return mh.newMongoOperations(200, true, "insert", "Insert performed."), MongoError{}
 }
 
 // deletes a mongo db
 func (mh *MongoDBHandler) DropDatabase(dbName string) MongoError {
-	if err := mh.getConnection(); !err.Status {
+	if err := mh.getConnection(); err.Status {
 		return err
 	}
 
@@ -386,7 +387,7 @@ func (mh *MongoDBHandler) DropDatabase(dbName string) MongoError {
 
 // deletes a mongo collection / table
 func (mh *MongoDBHandler) DropTable(tableName string) MongoError {
-	if err := mh.getConnection(); !err.Status {
+	if err := mh.getConnection(); err.Status {
 		return err
 	}
 
@@ -414,11 +415,11 @@ func (mh *MongoDBHandler) TotalCount() (int64, error) {
 
 // a query must be provided beforehand / or NOT
 func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
+
 	// connection to the mongodb server
-	if err := mh.getConnection(); !err.Status {
+	if err := mh.getConnection(); err.Status {
 		return MongoResults{}, err
 	}
-
 	// 5 sec timeout for the context
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -474,6 +475,7 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 		nextPage = 0
 	}
 
+	plainQuery, _ := mh.Query()
 	// the actual results xoxoxo
 	return MongoResults{
 		Status:   true,
@@ -489,6 +491,7 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 			LastPage:    totalPages,
 			PerPage:     mh.perPage,
 		},
+		Query: plainQuery,
 	}, MongoError{}
 }
 
@@ -496,12 +499,14 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 // to avoid repetitions and code
 // cluttering
 func (mh *MongoDBHandler) newMongoError(code int, err string) MongoError {
+	plainQuery, _ := mh.Query()
 	return MongoError{
 		Status:   false,
 		Code:     code,
 		Database: mh.dbName,
 		Table:    mh.tableName,
 		Error:    err,
+		Query:    plainQuery,
 	}
 }
 
@@ -509,7 +514,7 @@ func (mh *MongoDBHandler) newMongoError(code int, err string) MongoError {
 // and a slice of data
 
 func (mh *MongoDBHandler) Update(update interface{}) (MongoOperationsResult, MongoError) {
-	if err := mh.getConnection(); !err.Status {
+	if err := mh.getConnection(); err.Status {
 		return MongoOperationsResult{}, err
 	}
 
@@ -532,7 +537,7 @@ func (mh *MongoDBHandler) Update(update interface{}) (MongoOperationsResult, Mon
 		return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 	}
 
-	return mh.newMongoOperations(200, true, "UPDATE", "Update performed"), MongoError{}
+	return mh.newMongoOperations(200, true, "update", "Update performed"), MongoError{}
 }
 
 func (mh *MongoDBHandler) newMongoOperations(code int, status bool, operation string, message string) MongoOperationsResult {
@@ -549,13 +554,36 @@ func (mh *MongoDBHandler) newMongoOperations(code int, status bool, operation st
 	}
 }
 
-func (mh *MongoDBHandler) UpdateByID(recordId string, data interface{}) error {
-	return nil
+func (mh *MongoDBHandler) UpdateByID(recordId string, data interface{}) (MongoOperationsResult, MongoError) {
+	if err := mh.getConnection(); err.Status {
+		return MongoOperationsResult{}, err
+	}
+
+	if mh.useTimestamps {
+		switch d := data.(type) {
+		case []map[string]interface{}:
+			for i := range d {
+				d[i] = mh.appendTimestamps(d[i]).(map[string]interface{})
+			}
+		case map[string]interface{}:
+			data = mh.appendTimestamps(d).(map[string]interface{})
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	_, err := mh.collection.UpdateByID(ctx, recordId, data)
+	if err != nil {
+		return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
+	}
+
+	return mh.newMongoOperations(200, true, "updateById", "Update performed for record id: "+recordId), MongoError{}
 }
 
 // basically, delete where
 func (mh *MongoDBHandler) Delete(filter interface{}) (MongoOperationsResult, MongoError) {
-	if err := mh.getConnection(); !err.Status {
+	if err := mh.getConnection(); err.Status {
 		return MongoOperationsResult{}, err
 	}
 
@@ -564,10 +592,10 @@ func (mh *MongoDBHandler) Delete(filter interface{}) (MongoOperationsResult, Mon
 
 	_, err := mh.collection.DeleteMany(ctx, filter)
 	if err != nil {
-		return mh.newMongoOperations(500, false, "DELETE", "Something happened while deleting: "+err.Error()), MongoError{}
+		return mh.newMongoOperations(500, false, "delete", "Something happened while deleting: "+err.Error()), MongoError{}
 	}
 
-	return mh.newMongoOperations(200, false, "DELETE", "Document deleted"), MongoError{}
+	return mh.newMongoOperations(200, false, "delete", "Document deleted"), MongoError{}
 }
 
 // map the operator with the value
@@ -653,8 +681,8 @@ func (mh *MongoDBHandler) Query() (string, error) {
 
 // not finished yet
 func (mh *MongoDBHandler) Aggregate() (MongoResults, MongoError) {
-	if err := mh.getConnection(); err != nil {
-		return MongoResults{}, mh.newMongoError(500, err.Error())
+	if err := mh.getConnection(); err.Status {
+		return MongoResults{}, err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)

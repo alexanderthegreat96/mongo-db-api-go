@@ -34,41 +34,37 @@ func main() {
 	// 	"age":       21,
 	// }
 
-	query, err := driver.
+	data, err := driver.
 		MongoDB().
 		DB("alexanderdth").
 		Table("my-table").
-		Where("firstName", "=", "DEGIJj").
+		Where("firstName", "like", "DEGIJj").
 		Where("firstName", "=", "DEGIJ1j").
 		OrWhere("lastName", "like", "aaa").
 		SortBy("created_at", "DESC").
 		SortBy("firstName", "ASC").
 		PerPage(10).
-		Query()
+		Find()
 
-	if err != nil {
-		fmt.Println(err.Error())
+	if err.Error != "" {
+		// Handle the error
+		fmt.Println("Error:", err.Error)
+		fmt.Println("Used Query:", err.Query)
+	} else {
+		// Print the data
+		fmt.Println("Status:", data.Status)
+		fmt.Println("Code:", data.Code)
+		fmt.Println("Database:", data.Database)
+		fmt.Println("Table:", data.Table)
+		fmt.Println("Count:", data.Count)
+		fmt.Println("Pagination:")
+		fmt.Println("\tTotalPages:", data.Pagination.TotalPages)
+		fmt.Println("\tCurrentPage:", data.Pagination.CurrentPage)
+		fmt.Println("\tNextPage:", data.Pagination.NextPage)
+		fmt.Println("\tLastPage:", data.Pagination.LastPage)
+		fmt.Println("\tPerPage:", data.Pagination.PerPage)
+
 	}
-
-	fmt.Println(query)
-	// if err.Error != "" {
-	// 	// Handle the error
-	// 	fmt.Println("Error:", err)
-	// } else {
-	// 	// Print the data
-	// 	fmt.Println("Status:", data.Status)
-	// 	fmt.Println("Code:", data.Code)
-	// 	fmt.Println("Database:", data.Database)
-	// 	fmt.Println("Table:", data.Table)
-	// 	fmt.Println("Count:", data.Count)
-	// 	fmt.Println("Pagination:")
-	// 	fmt.Println("\tTotalPages:", data.Pagination.TotalPages)
-	// 	fmt.Println("\tCurrentPage:", data.Pagination.CurrentPage)
-	// 	fmt.Println("\tNextPage:", data.Pagination.NextPage)
-	// 	fmt.Println("\tLastPage:", data.Pagination.LastPage)
-	// 	fmt.Println("\tPerPage:", data.Pagination.PerPage)
-
-	// }
 
 	// rand.Seed(time.Now().UnixNano())
 
