@@ -405,7 +405,14 @@ func (mh *MongoDBHandler) DropTable(tableName string) MongoError {
 func (mh *MongoDBHandler) TotalCount() (int64, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	totalCount, err := mh.collection.CountDocuments(ctx, mh.query)
+
+	// for case insensitive searching
+	countOptions := options.Count().SetCollation(&options.Collation{
+		Locale:   "en",
+		Strength: 2, // Case-insensitive
+	})
+
+	totalCount, err := mh.collection.CountDocuments(ctx, mh.query, countOptions)
 	if err != nil {
 		return 0, err
 	}
@@ -424,7 +431,12 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	opts := options.Find()
+	// need case insensitive so we're applyhing this
+	opts := options.Find().SetCollation(&options.Collation{
+		Locale:   "en",
+		Strength: 2, // Case-insensitive
+	})
+
 	if len(mh.sort) > 0 {
 		opts.SetSort(mh.sort)
 	}
@@ -532,7 +544,12 @@ func (mh *MongoDBHandler) Update(update interface{}) (MongoOperationsResult, Mon
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := mh.collection.UpdateMany(ctx, mh.query, update)
+	opts := options.Update().SetCollation(&options.Collation{
+		Locale:   "en",
+		Strength: 2, // Case-insensitive
+	})
+
+	_, err := mh.collection.UpdateMany(ctx, mh.query, update, opts)
 	if err != nil {
 		return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 	}
@@ -578,7 +595,7 @@ func (mh *MongoDBHandler) UpdateByID(recordId string, data interface{}) (MongoOp
 		return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 	}
 
-	return mh.newMongoOperations(200, true, "updateById", "Update performed for record id: "+recordId), MongoError{}
+	return mh.newMongoOperations(200, true, "updateById", "Update performed"), MongoError{}
 }
 
 // basically, delete where
@@ -590,7 +607,12 @@ func (mh *MongoDBHandler) Delete(filter interface{}) (MongoOperationsResult, Mon
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := mh.collection.DeleteMany(ctx, filter)
+	opts := options.Delete().SetCollation(&options.Collation{
+		Locale:   "en",
+		Strength: 2, // Case-insensitive
+	})
+
+	_, err := mh.collection.DeleteMany(ctx, filter, opts)
 	if err != nil {
 		return mh.newMongoOperations(500, false, "delete", "Something happened while deleting: "+err.Error()), MongoError{}
 	}
@@ -677,6 +699,10 @@ func (mh *MongoDBHandler) Query() (string, error) {
 
 	}
 	return "", errors.New("no query provided")
+}
+
+func (mh *MongoDBHandler) First() {
+
 }
 
 // not finished yet

@@ -36,13 +36,10 @@ func main() {
 
 	data, err := driver.
 		MongoDB().
-		DB("alexanderdth").
-		Table("my-table").
-		Where("firstName", "like", "DEGIJj").
-		Where("firstName", "=", "DEGIJ1j").
-		OrWhere("lastName", "like", "aaa").
+		DB("isac-division2-bot").
+		Table("account-versioning").
+		Where("username", "=", "lmao-b").
 		SortBy("created_at", "DESC").
-		SortBy("firstName", "ASC").
 		PerPage(10).
 		Find()
 
@@ -64,6 +61,7 @@ func main() {
 		fmt.Println("\tLastPage:", data.Pagination.LastPage)
 		fmt.Println("\tPerPage:", data.Pagination.PerPage)
 
+		// fmt.Println(data.Results)
 	}
 
 	// rand.Seed(time.Now().UnixNano())
