@@ -18,58 +18,75 @@ import (
 
 var apiPort string
 var apiHost string
+var canBoot bool
+var logger *log.Logger
+var mongoDb *driver.MongoDBHandler
 
 func init() {
-	// ensure loading .env file in the
-	// root of the probam
-	// otherwise driver cannot acccess
-	// it's contents
-
-	err := godotenv.Load()
-	if err != nil {
-		log.Fatal("Error loading .env file")
-	}
-
-	logger := log.New(os.Stdout, "[MONGO-API]: ", log.Ldate|log.Ltime)
-
-	apiPort = helpers.GetEnv("API_PORT", "9776")
-	apiHost = helpers.GetEnv("API_HOST", "localhost")
+	logger = log.New(os.Stdout, "[MONGO-API]: ", log.Ldate|log.Ltime)
 
 	versionNumber := "v1.0"
 	mongoApiBanner := figure.NewColorFigure("MongoAPI "+versionNumber, "", "blue", false)
 	mongoApiBanner.Print()
 
-	logger.Println("Server Information:")
-	logger.Printf("MongoDB Host: %s", helpers.GetEnv("MONGO_DB_HOST", ""))
-	logger.Printf("MongoDB Port: %s", helpers.GetEnv("MONGO_DB_PORT", ""))
-	logger.Printf("MongoDB Username: %s", helpers.GetEnv("MONGO_DB_USERNAME", "admin"))
-	logger.Printf("MongoDB Password: %s", helpers.GetEnv("MONGO_DB_HOST", "admin"))
-	logger.Printf("MongoDB Default Database: %s", helpers.GetEnv("MONGO_DB_NAME", ""))
-	logger.Printf("MongoDB Default Table: %s", helpers.GetEnv("MONGO_DB_Table", ""))
+	canBoot = true
+	err := godotenv.Load()
+	if err != nil {
+		canBoot = false
+		logger.Println("Unable to load .env file.")
+		return
+	}
+
+	logger.Println("Using MongoDB Server Information:")
+	logger.Printf("MongoDB Host: %s", helpers.GetEnv("MONGO_DB_HOST", "Missing: MONGO_DB_HOST"))
+	logger.Printf("MongoDB Port: %s", helpers.GetEnv("MONGO_DB_PORT", "Missing: MONGO_DB_PORT"))
+	logger.Printf("MongoDB Username: %s", helpers.GetEnv("MONGO_DB_USERNAME", "Missing: MONGO_DB_USERNAME"))
+	logger.Printf("MongoDB Password: %s", helpers.GetEnv("MONGO_DB_PASSWORD", "Missing: MONGO_DB_PASSWORD"))
+	logger.Printf("MongoDB Default Database: %s", helpers.GetEnv("MONGO_DB_NAME", "Missing: MONGO_DB_NAME"))
+	logger.Printf("MongoDB Default Table: %s", helpers.GetEnv("MONGO_DB_TABLE", "Missing: MONGO_DB_TABLE"))
+
+	canConnect := driver.MongoDB().TestMongoConnection()
+	if !canConnect {
+		canBoot = false
+		logger.Println("Unable to connect to the MongoDB server. Please check your settings.")
+		return
+	}
+
+	apiPort = helpers.GetEnv("API_PORT", "9776")
+	apiHost = helpers.GetEnv("API_HOST", "localhost")
+
+	mongoDb = driver.MongoDB()
+
+}
+
+func main() {
+	if !canBoot {
+		logger.Println("Errors are present. Unable to boot the API.")
+		return
+	}
 
 	logger.Println("API Information:")
 	logger.Println("You may start sending requests to: http://" + apiHost + ":" + apiPort)
 	logger.Println("Please open up your browser and head over to: /docs")
 
-}
-
-func main() {
 	// remove when NOT compiling
 	gin.SetMode(gin.ReleaseMode)
+
+	// @BasePath /
 	mongoApi := gin.Default()
 
 	// list all databses on the server
 	mongoApi.GET("/db/databases", func(c *gin.Context) {
-		databases, err := driver.MongoDB().ListDatabases()
+		databases, databasesErr := mongoDb.ListDatabases()
 
-		if err.Error != "" {
-			c.JSON(http.StatusOK, responses.GenericErrorResponse{
-				Code:   err.Code,
-				Status: err.Status,
-				Error:  err.Error,
+		if databasesErr.Error != "" {
+			c.JSON(databasesErr.Code, responses.GenericErrorResponse{
+				Code:   databasesErr.Code,
+				Status: databasesErr.Status,
+				Error:  databasesErr.Error,
 			})
 		} else {
-			c.JSON(http.StatusOK, responses.DatabaseListResponse{
+			c.JSON(databases.Code, responses.DatabaseListResponse{
 				Status:    true,
 				Databases: databases.Databases,
 			})
@@ -80,12 +97,13 @@ func main() {
 	mongoApi.DELETE("/db/:db_name/delete", func(c *gin.Context) {
 		dbName := c.Param("db_name")
 		if dbName != "" {
-			unableToWipeDbErr := driver.MongoDB().DropDatabase(dbName)
+			unableToWipeDbErr := mongoDb.DropDatabase(dbName)
 			if unableToWipeDbErr.Error != "" {
-				c.JSON(http.StatusOK, responses.GenericErrorResponse{
-					Code:   unableToWipeDbErr.Code,
-					Status: unableToWipeDbErr.Status,
-					Error:  unableToWipeDbErr.Error,
+				c.JSON(unableToWipeDbErr.Code, responses.GenericErrorResponse{
+					Code:     unableToWipeDbErr.Code,
+					Status:   unableToWipeDbErr.Status,
+					Database: unableToWipeDbErr.Database,
+					Error:    unableToWipeDbErr.Error,
 				})
 			} else {
 				c.JSON(http.StatusOK, responses.DeleteDatabaseSuccessResponse{
@@ -108,15 +126,16 @@ func main() {
 	mongoApi.GET("/db/:db_name/tables", func(c *gin.Context) {
 		dbName := c.Param("db_name")
 		if dbName != "" {
-			tablesInDatabase, tablesInDatabaseErr := driver.MongoDB().ListCollections(dbName)
+			tablesInDatabase, tablesInDatabaseErr := mongoDb.ListCollections(dbName)
 			if tablesInDatabaseErr.Error != "" {
-				c.JSON(http.StatusOK, responses.GenericErrorResponse{
-					Code:   tablesInDatabaseErr.Code,
-					Status: tablesInDatabaseErr.Status,
-					Error:  tablesInDatabaseErr.Error,
+				c.JSON(tablesInDatabaseErr.Code, responses.GenericErrorResponse{
+					Code:     tablesInDatabaseErr.Code,
+					Status:   tablesInDatabaseErr.Status,
+					Database: tablesInDatabaseErr.Database,
+					Error:    tablesInDatabaseErr.Error,
 				})
 			} else {
-				c.JSON(http.StatusOK, responses.TablesInDatabaseResponse{
+				c.JSON(tablesInDatabase.Code, responses.TablesInDatabaseResponse{
 					Status: tablesInDatabase.Status,
 					Tables: tablesInDatabase.Tables,
 				})
@@ -136,12 +155,14 @@ func main() {
 		dbName := c.Param("db_name")
 		tableName := c.Param("table_name")
 		if dbName != "" && tableName != "" {
-			wipeTableErr := driver.MongoDB().DropTable(dbName, tableName)
+			wipeTableErr := mongoDb.DropTable(dbName, tableName)
 			if wipeTableErr.Error != "" {
-				c.JSON(http.StatusOK, responses.GenericErrorResponse{
-					Code:   wipeTableErr.Code,
-					Status: wipeTableErr.Status,
-					Error:  wipeTableErr.Error,
+				c.JSON(wipeTableErr.Code, responses.GenericErrorResponse{
+					Code:     wipeTableErr.Code,
+					Status:   wipeTableErr.Status,
+					Database: wipeTableErr.Database,
+					Table:    wipeTableErr.Table,
+					Error:    wipeTableErr.Error,
 				})
 			} else {
 				c.JSON(http.StatusOK, responses.WipeTableInDatabaseResponse{
@@ -203,16 +224,19 @@ func main() {
 			orQuery = helpers.ParseQuery(c.Query("query_or"))
 		}
 
-		results, resultsErr := driver.
-			MongoDB().
-			DB(dbName).
-			Table(tableName).
-			Page(page).
-			PerPage(perPage).
-			AndAll(andQuery).
-			OrAll(orQuery).
-			SortAll(sort).
-			Find()
+		mongoDb.ResetQuery()
+		mongoDb.ResetSort()
+
+		results, resultsErr :=
+			mongoDb.
+				DB(dbName).
+				Table(tableName).
+				Page(page).
+				PerPage(perPage).
+				AndAll(andQuery).
+				OrAll(orQuery).
+				SortAll(sort).
+				Find()
 
 		var rawQuery interface{}
 		if resultsErr.Query != "" {
@@ -223,31 +247,235 @@ func main() {
 		}
 
 		if resultsErr.Error != "" {
-			c.JSON(http.StatusOK, responses.GenericErrorResponse{
-				Code:   resultsErr.Code,
-				Status: resultsErr.Status,
-				Error:  resultsErr.Error,
-				Query:  rawQuery,
+			c.JSON(results.Code, responses.GenericErrorResponse{
+				Code:     resultsErr.Code,
+				Status:   resultsErr.Status,
+				Error:    resultsErr.Error,
+				Database: resultsErr.Database,
+				Table:    resultsErr.Table,
+				Query:    rawQuery,
 			})
-		} else {
-			c.JSON(http.StatusOK, responses.SelectResultsResponse{
-				Status:   results.Status,
-				Code:     results.Code,
-				Database: results.Database,
-				Table:    results.Table,
-				Count:    results.Count,
-				Pagination: responses.SelectResultsPaginationResponse{
-					TotalPages:  results.Pagination.TotalPages,
-					CurrentPage: results.Pagination.CurrentPage,
-					NextPage:    results.Pagination.NextPage,
-					PrevPage:    results.Pagination.PrevPage,
-					LastPage:    results.Pagination.LastPage,
-					PerPage:     results.Pagination.PerPage,
-				},
-				Query:   rawQuery,
-				Results: results.Results,
-			})
+			return
 		}
+
+		c.JSON(results.Code, responses.SelectResultsResponse{
+			Status:   results.Status,
+			Code:     results.Code,
+			Database: results.Database,
+			Table:    results.Table,
+			Count:    results.Count,
+			Pagination: responses.SelectResultsPaginationResponse{
+				TotalPages:  results.Pagination.TotalPages,
+				CurrentPage: results.Pagination.CurrentPage,
+				NextPage:    results.Pagination.NextPage,
+				PrevPage:    results.Pagination.PrevPage,
+				LastPage:    results.Pagination.LastPage,
+				PerPage:     results.Pagination.PerPage,
+			},
+			Query:   rawQuery,
+			Results: results.Results,
+		})
 	})
-	mongoApi.Run(apiHost + ":" + apiPort) // listen and serve on 0.0.0.0:8080 (for windows "localhost:8080")
+
+	// insert data into the database
+	mongoApi.POST("/db/:db_name/:table_name/insert", func(c *gin.Context) {
+		dbName := c.Param("db_name")
+		tableName := c.Param("table_name")
+
+		err := c.Request.ParseForm()
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		payload := c.Request.Form.Get("payload")
+		if payload == "" {
+			c.JSON(http.StatusBadRequest, responses.GenericErrorResponse{
+				Code:     400,
+				Status:   false,
+				Error:    "Failed to provide data under the key 'payload'",
+				Database: dbName,
+				Table:    tableName,
+			})
+			return
+		}
+
+		convertedPayload, convertedPayloadErr := helpers.ConvertJsonToData(payload)
+		if convertedPayloadErr != nil {
+			c.JSON(http.StatusBadRequest, responses.GenericErrorResponse{
+				Code:     400,
+				Status:   false,
+				Error:    convertedPayloadErr.Error(),
+				Database: dbName,
+				Table:    tableName,
+			})
+			return
+		}
+
+		insert, insertErr := mongoDb.DB(dbName).Table(tableName).Insert(convertedPayload)
+		if insertErr.Error != "" {
+			c.JSON(http.StatusOK, responses.GenericErrorResponse{
+				Code:     insertErr.Code,
+				Status:   insertErr.Status,
+				Error:    insertErr.Error,
+				Database: insertErr.Database,
+				Table:    insertErr.Table,
+			})
+			return
+		}
+
+		c.JSON(http.StatusOK, responses.MongoOperationsResultResponse{
+			Code:      insert.Code,
+			Status:    insert.Status,
+			Database:  insert.Database,
+			Table:     insert.Table,
+			Operation: insert.Operation,
+			Message:   insert.Message,
+		})
+
+	})
+
+	// update data by id
+	mongoApi.PUT("/db/:db_name/:table_name/update/:mongo_id", func(c *gin.Context) {
+		dbName := c.Param("db_name")
+		tableName := c.Param("table_name")
+		mongoId := c.Param("mongo_id")
+
+		err := c.Request.ParseForm()
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		payload := c.Request.Form.Get("payload")
+		if payload == "" {
+			c.JSON(http.StatusBadRequest, responses.GenericErrorResponse{
+				Code:     400,
+				Status:   false,
+				Error:    "Failed to provide data under the key 'payload'",
+				Database: dbName,
+				Table:    tableName,
+			})
+			return
+		}
+
+		convertedPayload, convertedPayloadErr := helpers.ConvertJsonToData(payload)
+		if convertedPayloadErr != nil {
+			c.JSON(http.StatusBadRequest, responses.GenericErrorResponse{
+				Code:     400,
+				Status:   false,
+				Error:    convertedPayloadErr.Error(),
+				Database: dbName,
+				Table:    tableName,
+			})
+			return
+		}
+
+		updateById, updateByIdErr := mongoDb.DB(dbName).Table(tableName).UpdateByID(mongoId, convertedPayload)
+
+		if updateByIdErr.Error != "" {
+			c.JSON(updateByIdErr.Code, responses.GenericErrorResponse{
+				Code:     updateByIdErr.Code,
+				Status:   updateByIdErr.Status,
+				Error:    updateByIdErr.Error,
+				Database: updateByIdErr.Database,
+				Table:    updateByIdErr.Table,
+			})
+			return
+		}
+
+		c.JSON(updateById.Code, responses.MongoOperationsResultResponse{
+			Code:      updateById.Code,
+			Status:    updateById.Status,
+			Database:  updateById.Database,
+			Table:     updateById.Table,
+			Operation: updateById.Operation,
+			Message:   updateById.Message,
+		})
+	})
+
+	// update based on a provided query
+	mongoApi.PUT("/db/:db_name/:table_name/update-where", func(c *gin.Context) {
+		dbName := c.Param("db_name")
+		tableName := c.Param("table_name")
+
+		err := c.Request.ParseForm()
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		payload := c.Request.Form.Get("payload")
+		if payload == "" {
+			c.JSON(http.StatusBadRequest, responses.GenericErrorResponse{
+				Code:     400,
+				Status:   false,
+				Error:    "Failed to provide data under the key 'payload'",
+				Database: dbName,
+				Table:    tableName,
+			})
+			return
+		}
+
+		convertedPayload, convertedPayloadErr := helpers.ConvertJsonToData(payload)
+		if convertedPayloadErr != nil {
+			c.JSON(http.StatusBadRequest, responses.GenericErrorResponse{
+				Code:     400,
+				Status:   false,
+				Error:    convertedPayloadErr.Error(),
+				Database: dbName,
+				Table:    tableName,
+			})
+			return
+		}
+
+		var andQuery [][]interface{}
+
+		if c.Query("query_and") != "" {
+			andQuery = helpers.ParseQuery(c.Query("query_and"))
+		}
+
+		var orQuery [][]interface{}
+
+		if c.Query("query_or") != "" {
+			orQuery = helpers.ParseQuery(c.Query("query_or"))
+		}
+
+		mongoDb.ResetQuery()
+		update, updateErr :=
+			mongoDb.
+				DB(dbName).
+				Table(tableName).
+				AndAll(andQuery).
+				OrAll(orQuery).
+				Update(convertedPayload)
+
+		var rawQuery interface{}
+		if updateErr.Query != "" {
+			rawQuery = json.RawMessage(updateErr.Query)
+		}
+		if update.Query != "" {
+			rawQuery = json.RawMessage(update.Query)
+		}
+
+		if updateErr.Error != "" {
+			c.JSON(updateErr.Code, responses.GenericErrorResponse{
+				Code:     updateErr.Code,
+				Status:   updateErr.Status,
+				Error:    updateErr.Error,
+				Database: updateErr.Database,
+				Table:    updateErr.Table,
+				Query:    rawQuery,
+			})
+			return
+		}
+
+		c.JSON(update.Code, responses.MongoOperationsResultResponse{
+			Code:      update.Code,
+			Status:    update.Status,
+			Database:  update.Database,
+			Table:     update.Table,
+			Operation: update.Operation,
+			Message:   update.Message,
+			Query:     rawQuery,
+		})
+	})
+	mongoApi.Run(apiHost + ":" + apiPort)
 }

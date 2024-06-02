@@ -10,6 +10,7 @@ _vendor/
 .vscode/
 .idea/
 .DS_Store
+mongo-data/
 
 # Binary
 main

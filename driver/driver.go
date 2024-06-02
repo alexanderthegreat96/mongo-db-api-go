@@ -17,6 +17,8 @@ import (
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
+var canConnect bool
+
 type AggregationStage struct {
 	StageName string
 	Params    interface{}
@@ -99,14 +101,24 @@ type MongoOperationsResult struct {
 	Query     string
 }
 
+type SingleMongoResult struct {
+	Status   bool
+	Code     int
+	Database string
+	Table    string
+	IdType   string
+	Result   interface{}
+}
+
 // initializes the mongo handler driver
 // similar to how constructors work
 func MongoDB() *MongoDBHandler {
 	logger := log.New(os.Stdout, "[MONGO-DB-DRIVER]: ", log.Ldate|log.Ltime)
 
+	canConnect = true
 	host := helpers.GetEnv("MONGO_DB_HOST", "localhost")
 	port := helpers.GetEnv("MONGO_DB_PORT", "27017")
-	dbName := helpers.GetEnv("MONGO_DB_NAME=", "test")
+	dbName := helpers.GetEnv("MONGO_DB_NAME", "test")
 	tableName := helpers.GetEnv("MONGO_DB_TABLE", "test")
 	username := helpers.GetEnv("MONGO_DB_USERNAME", "admin")
 	password := helpers.GetEnv("MONGO_DB_PASSWORD", "admin")
@@ -136,11 +148,28 @@ func MongoDB() *MongoDBHandler {
 	}
 }
 
+func convertMongoID(id interface{}) string {
+	if objID, ok := id.(primitive.ObjectID); ok {
+		return objID.Hex()
+	}
+	return fmt.Sprintf("%v", id)
+}
+
+func (mh *MongoDBHandler) TestMongoConnection() bool {
+	if mh.client == nil {
+		if err := mh.getConnection(); err.Error != "" {
+			return false
+		}
+	}
+	return true
+}
+
 // handles connectivity
 func (mh *MongoDBHandler) getConnection() MongoError {
 	mh.logger.Println("Connecting to Mongo Server...")
 
 	if mh.client != nil {
+		mh.logger.Println("Connection stil active, using previous connection...")
 		// use the previously initialized connection
 		return MongoError{}
 	}
@@ -150,6 +179,7 @@ func (mh *MongoDBHandler) getConnection() MongoError {
 			Username: mh.username,
 			Password: mh.password,
 		}).
+		SetMaxPoolSize(10).
 		SetSocketTimeout(2 * time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -182,12 +212,19 @@ func (mh *MongoDBHandler) getConnection() MongoError {
 // set db name
 func (mh *MongoDBHandler) DB(dbName string) *MongoDBHandler {
 	mh.dbName = dbName
+	if mh.client != nil {
+		mh.db = mh.client.Database(dbName)
+	}
+
 	return mh
 }
 
 // set table / collection name
 func (mh *MongoDBHandler) Table(tableName string) *MongoDBHandler {
 	mh.tableName = tableName
+	if mh.client != nil {
+		mh.collection = mh.db.Collection(tableName)
+	}
 	return mh
 }
 
@@ -363,6 +400,10 @@ func (mh *MongoDBHandler) appendTimestamps(data interface{}) interface{} {
 // a slice
 
 func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, MongoError) {
+
+	fmt.Println(mh.dbName)
+	fmt.Println(mh.tableName)
+
 	if err := mh.getConnection(); err.Error != "" {
 		return MongoOperationsResult{}, err
 	}
@@ -396,6 +437,19 @@ func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, Mongo
 		if err != nil {
 			return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 		}
+	case []interface{}:
+		var interfaceSlice []interface{}
+		for _, item := range d {
+			if itemMap, ok := item.(map[string]interface{}); ok {
+				interfaceSlice = append(interfaceSlice, itemMap)
+			} else {
+				return MongoOperationsResult{}, mh.newMongoError(400, "unsupported data type in array")
+			}
+		}
+		_, err := mh.collection.InsertMany(ctx, interfaceSlice)
+		if err != nil {
+			return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
+		}
 	default:
 		return MongoOperationsResult{}, mh.newMongoError(400, "unsuported data type")
 	}
@@ -405,8 +459,11 @@ func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, Mongo
 
 // deletes a mongo db
 func (mh *MongoDBHandler) DropDatabase(dbName string) MongoError {
-	if err := mh.getConnection(); err.Error != "" {
-		return err
+	if mh.client == nil {
+		// connection to the mongodb server
+		if err := mh.getConnection(); err.Error != "" {
+			return err
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -440,8 +497,11 @@ func (mh *MongoDBHandler) DropDatabase(dbName string) MongoError {
 
 // deletes a mongo collection / table
 func (mh *MongoDBHandler) DropTable(dbName string, collectionName string) MongoError {
-	if err := mh.getConnection(); err.Error != "" {
-		return err
+	if mh.client == nil {
+		// connection to the mongodb server
+		if err := mh.getConnection(); err.Error != "" {
+			return err
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -496,6 +556,10 @@ func (mh *MongoDBHandler) DropTable(dbName string, collectionName string) MongoE
 }
 
 func (mh *MongoDBHandler) TotalCount() (int64, error) {
+	if mh.collection == nil {
+		return 0, nil
+	}
+
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -504,7 +568,6 @@ func (mh *MongoDBHandler) TotalCount() (int64, error) {
 		Locale:   "en",
 		Strength: 2, // Case-insensitive
 	})
-
 	totalCount, err := mh.collection.CountDocuments(ctx, mh.query, countOptions)
 	if err != nil {
 		return 0, err
@@ -543,10 +606,11 @@ func (mh *MongoDBHandler) SortAll(sortInput [][]interface{}) *MongoDBHandler {
 
 // a query must be provided beforehand / or NOT
 func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
-
-	// connection to the mongodb server
-	if err := mh.getConnection(); err.Error != "" {
-		return MongoResults{}, err
+	if mh.client == nil {
+		// connection to the mongodb server
+		if err := mh.getConnection(); err.Error != "" {
+			return MongoResults{}, err
+		}
 	}
 
 	// 5 sec timeout for the context
@@ -659,8 +723,11 @@ func (mh *MongoDBHandler) newMongoError(code int, err string) MongoError {
 // and a slice of data
 
 func (mh *MongoDBHandler) Update(update interface{}) (MongoOperationsResult, MongoError) {
-	if err := mh.getConnection(); !err.Status {
-		return MongoOperationsResult{}, err
+	if mh.client == nil {
+		// connection to the mongodb server
+		if err := mh.getConnection(); err.Error != "" {
+			return MongoOperationsResult{}, err
+		}
 	}
 
 	if mh.useTimestamps {
@@ -682,7 +749,7 @@ func (mh *MongoDBHandler) Update(update interface{}) (MongoOperationsResult, Mon
 		Strength: 2, // Case-insensitive
 	})
 
-	_, err := mh.collection.UpdateMany(ctx, mh.query, update, opts)
+	_, err := mh.collection.UpdateMany(ctx, mh.query, bson.M{"$set": update}, opts)
 	if err != nil {
 		return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 	}
@@ -705,8 +772,10 @@ func (mh *MongoDBHandler) newMongoOperations(code int, status bool, operation st
 }
 
 func (mh *MongoDBHandler) UpdateByID(recordId string, data interface{}) (MongoOperationsResult, MongoError) {
-	if err := mh.getConnection(); err.Error != "" {
-		return MongoOperationsResult{}, err
+	if mh.client == nil {
+		if err := mh.getConnection(); err.Error != "" {
+			return MongoOperationsResult{}, err
+		}
 	}
 
 	if mh.useTimestamps {
@@ -723,7 +792,27 @@ func (mh *MongoDBHandler) UpdateByID(recordId string, data interface{}) (MongoOp
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	_, err := mh.collection.UpdateByID(ctx, recordId, data)
+	var filter bson.M
+
+	findRecord, findRecordErr := mh.FindById(recordId)
+
+	if findRecordErr.Error != "" {
+		return MongoOperationsResult{}, findRecordErr
+	}
+
+	update := bson.M{"$set": data}
+	if findRecord.IdType == "mongo" {
+		objID, err := primitive.ObjectIDFromHex(recordId)
+		if err != nil {
+			return MongoOperationsResult{}, mh.newMongoError(500, "Unable to convert string to Mongo ID: "+err.Error())
+		}
+		filter = bson.M{"_id": objID}
+
+	} else {
+		filter = bson.M{"_id": recordId}
+	}
+
+	_, err := mh.collection.UpdateOne(ctx, filter, update)
 	if err != nil {
 		return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 	}
@@ -731,10 +820,77 @@ func (mh *MongoDBHandler) UpdateByID(recordId string, data interface{}) (MongoOp
 	return mh.newMongoOperations(200, true, "updateById", "Update performed"), MongoError{}
 }
 
+func (mh *MongoDBHandler) FindById(recordId string) (SingleMongoResult, MongoError) {
+	if mh.client == nil {
+		if err := mh.getConnection(); err.Error != "" {
+			return SingleMongoResult{}, err
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var filter bson.M
+	var result bson.M
+	var err error
+
+	// try using regular mongo id
+	objID, objErr := primitive.ObjectIDFromHex(recordId)
+	if objErr == nil {
+		filter = bson.M{"_id": objID}
+		err = mh.collection.FindOne(ctx, filter).Decode(&result)
+		if err == nil {
+			resultMap := make(map[string]interface{})
+			for k, v := range result {
+				if k == "_id" {
+					resultMap["id"] = convertMongoID(v)
+				} else {
+					resultMap[k] = v
+				}
+			}
+			return SingleMongoResult{
+				Status:   true,
+				Code:     200,
+				IdType:   "mongo",
+				Database: mh.dbName,
+				Table:    mh.tableName,
+				Result:   resultMap,
+			}, MongoError{}
+		}
+	}
+
+	// try using regular string as an ID
+	filter = bson.M{"_id": recordId}
+	err = mh.collection.FindOne(ctx, filter).Decode(&result)
+	if err != nil {
+		return SingleMongoResult{}, mh.newMongoError(404, "Record not found!")
+	}
+
+	resultMap := make(map[string]interface{})
+	for k, v := range result {
+		if k == "_id" {
+			resultMap["id"] = convertMongoID(v)
+		} else {
+			resultMap[k] = v
+		}
+	}
+	return SingleMongoResult{
+		Status:   true,
+		Code:     200,
+		IdType:   "string",
+		Database: mh.dbName,
+		Table:    mh.tableName,
+		Result:   resultMap,
+	}, MongoError{}
+
+}
+
 // basically, delete where
 func (mh *MongoDBHandler) Delete(filter interface{}) (MongoOperationsResult, MongoError) {
-	if err := mh.getConnection(); !err.Status {
-		return MongoOperationsResult{}, err
+	if mh.client == nil {
+		// connection to the mongodb server
+		if err := mh.getConnection(); err.Error != "" {
+			return MongoOperationsResult{}, err
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -969,7 +1125,34 @@ func (mh *MongoDBHandler) ListCollections(dbName string) (MongoTablesListResult,
 
 func (mh *MongoDBHandler) ResetQuery() *MongoDBHandler {
 	if len(mh.query) > 0 {
-		mh.query = nil
+		mh.query = make(map[string]interface{})
 	}
+	return mh
+}
+
+func (mh *MongoDBHandler) ResetSort() *MongoDBHandler {
+	if len(mh.sort) > 0 {
+		mh.sort = []primitive.E{}
+	}
+	return mh
+}
+
+func (mh *MongoDBHandler) ResetState() *MongoDBHandler {
+	if len(mh.query) > 0 {
+		mh.query = make(map[string]interface{})
+	}
+
+	if len(mh.sort) > 0 {
+		mh.sort = []primitive.E{}
+	}
+
+	if mh.dbName != "" {
+		mh.dbName = ""
+	}
+
+	if mh.tableName != "" {
+		mh.tableName = ""
+	}
+
 	return mh
 }

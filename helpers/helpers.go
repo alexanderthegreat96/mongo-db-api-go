@@ -1,6 +1,8 @@
 package helpers
 
 import (
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -41,7 +43,7 @@ func convertStringToType(value string) interface{} {
 }
 
 func ParseQuery(queryString string) [][]interface{} {
-	operators := []string{"=", "!=", ">=", "<=", "<", ">", "like"}
+	operators := []string{"=", "!=", ">=", "<=", "<", ">", "like", "_like_"}
 
 	// slice of slices that cant contain
 	// multiple data types
@@ -118,4 +120,13 @@ func ParseSort(queryString string) [][]interface{} {
 	}
 
 	return nil
+}
+
+func ConvertJsonToData(jsonInput string) (interface{}, error) {
+	var result interface{}
+	err := json.Unmarshal([]byte(jsonInput), &result)
+	if err != nil {
+		return nil, errors.New("the input string is not a valid JSON")
+	}
+	return result, nil
 }

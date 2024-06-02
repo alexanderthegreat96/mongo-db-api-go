@@ -17,31 +17,32 @@ func main() {
 
 	data, err := driver.
 		MongoDB().
-		DB("my-database").
-		Table("city-inspections").
-		PerPage(10).
-		Where("business_name", "=", "SHENODA AZIZ").
-		Find()
+		DB("movie-dataset").
+		Table("genome-scores").
+		FindById("665b6fb9c68a61c818accfaf")
 
-	if err.Error != "" {
-		// Handle the error
-		fmt.Println("Error:", err.Error)
-		fmt.Println("Used Query:", err.Query)
-	} else {
-		fmt.Println(data.Query)
-		// Print the data
-		fmt.Println("Status:", data.Status)
-		fmt.Println("Code:", data.Code)
-		fmt.Println("Database:", data.Database)
-		fmt.Println("Table:", data.Table)
-		fmt.Println("Count:", data.Count)
-		fmt.Println("Pagination:")
-		fmt.Println("\tTotalPages:", data.Pagination.TotalPages)
-		fmt.Println("\tCurrentPage:", data.Pagination.CurrentPage)
-		fmt.Println("\tNextPage:", data.Pagination.NextPage)
-		fmt.Println("\tLastPage:", data.Pagination.LastPage)
-		fmt.Println("\tPerPage:", data.Pagination.PerPage)
-	}
+	fmt.Println(data)
+	fmt.Println(err)
+
+	// if err.Error != "" {
+	// 	// Handle the error
+	// 	fmt.Println("Error:", err.Error)
+	// 	fmt.Println("Used Query:", err.Query)
+	// } else {
+	// 	fmt.Println(data.Query)
+	// 	// Print the data
+	// 	fmt.Println("Status:", data.Status)
+	// 	fmt.Println("Code:", data.Code)
+	// 	fmt.Println("Database:", data.Database)
+	// 	fmt.Println("Table:", data.Table)
+	// 	fmt.Println("Count:", data.Count)
+	// 	fmt.Println("Pagination:")
+	// 	fmt.Println("\tTotalPages:", data.Pagination.TotalPages)
+	// 	fmt.Println("\tCurrentPage:", data.Pagination.CurrentPage)
+	// 	fmt.Println("\tNextPage:", data.Pagination.NextPage)
+	// 	fmt.Println("\tLastPage:", data.Pagination.LastPage)
+	// 	fmt.Println("\tPerPage:", data.Pagination.PerPage)
+	// }
 
 	// dbs, dbsErr := driver.MongoDB().ListDatabases()
 	// fmt.Println(dbs)

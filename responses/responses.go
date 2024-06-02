@@ -1,10 +1,12 @@
 package responses
 
 type GenericErrorResponse struct {
-	Code   int         `json:"code"`
-	Status bool        `json:"status"`
-	Error  string      `json:"error"`
-	Query  interface{} `json:"query"`
+	Code     int         `json:"code"`
+	Status   bool        `json:"status"`
+	Error    string      `json:"error"`
+	Database string      `json:"database"`
+	Table    string      `json:"table"`
+	Query    interface{} `json:"query"`
 }
 
 type DatabaseListResponse struct {
@@ -46,4 +48,14 @@ type SelectResultsResponse struct {
 	Pagination SelectResultsPaginationResponse `json:"pagination"`
 	Query      interface{}                     `json:"query"`
 	Results    []map[string]interface{}        `json:"results"`
+}
+
+type MongoOperationsResultResponse struct {
+	Status    bool        `json:"status"`
+	Code      int         `json:"code"`
+	Database  string      `json:"database"`
+	Table     string      `json:"table"`
+	Operation string      `json:"operation"`
+	Message   string      `json:"message"`
+	Query     interface{} `json:"query"`
 }
