@@ -7,6 +7,15 @@ MongoDB API is a RESTful API service for interacting with MongoDB databases. Thi
 - [Installation](#installation)
 - [Environment Variables](#environment-variables)
 - [API Endpoints](#api-endpoints)
+- [Pre-Built Clients](#pre-build-clients)
+
+## Pre-build Clients
+There are 2 clients available:
+ - PHP 
+    - https://github.com/alexanderthegreat96/mongo-api-php-client
+ - Python 
+    - https://github.com/alexanderthegreat96/mongo-api-python-client
+ - Go (comming soon)
 
 ## Installation
 

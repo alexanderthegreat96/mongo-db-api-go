@@ -1031,8 +1031,10 @@ func (mh *MongoDBHandler) First() {
 
 // not finished yet
 func (mh *MongoDBHandler) Aggregate() (MongoResults, MongoError) {
-	if err := mh.getConnection(); err.Error != "" {
-		return MongoResults{}, err
+	if mh.client == nil {
+		if err := mh.getConnection(); err.Error != "" {
+			return MongoResults{}, err
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1110,8 +1112,10 @@ func (mh *MongoDBHandler) ClearAggregationPipeline() *MongoDBHandler {
 }
 
 func (mh *MongoDBHandler) ListDatabases() (MongoDatabaseListResult, MongoError) {
-	if err := mh.getConnection(); err.Error != "" {
-		return MongoDatabaseListResult{}, err
+	if mh.client == nil {
+		if err := mh.getConnection(); err.Error != "" {
+			return MongoDatabaseListResult{}, err
+		}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1133,8 +1137,10 @@ func (mh *MongoDBHandler) ListDatabases() (MongoDatabaseListResult, MongoError) 
 }
 
 func (mh *MongoDBHandler) ListCollections(dbName string) (MongoTablesListResult, MongoError) {
-	if err := mh.getConnection(); err.Error != "" {
-		return MongoTablesListResult{}, err
+	if mh.client == nil {
+		if err := mh.getConnection(); err.Error != "" {
+			return MongoTablesListResult{}, err
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -1191,3 +1197,13 @@ func (mh *MongoDBHandler) ResetState() *MongoDBHandler {
 
 	return mh
 }
+
+// func (mh *MongoDBHandler) ExecuteQuery(queryString string) {
+// 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+// 	defer cancel()
+
+// 	// should be able to take the query in string format
+// 	// convert it to BSON so it canbe executed
+// 	// in mongo
+// 	// then, should be able to return whatever the result was
+// }
