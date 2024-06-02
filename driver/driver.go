@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"os"
 	"strconv"
 	"time"
 
@@ -39,6 +41,7 @@ type MongoDBHandler struct {
 	client              *mongo.Client
 	db                  *mongo.Database
 	collection          *mongo.Collection
+	logger              *log.Logger
 }
 
 // used for results mapping
@@ -46,6 +49,7 @@ type MongoResultPagination struct {
 	TotalPages  int
 	CurrentPage int
 	NextPage    int
+	PrevPage    int
 	LastPage    int
 	PerPage     int
 }
@@ -72,6 +76,19 @@ type MongoError struct {
 	Query    string
 }
 
+type MongoDatabaseListResult struct {
+	Status    bool
+	Code      int
+	Databases []string
+}
+
+type MongoTablesListResult struct {
+	Status   bool
+	Code     int
+	Database string
+	Tables   []string
+}
+
 type MongoOperationsResult struct {
 	Status    bool
 	Code      int
@@ -85,6 +102,8 @@ type MongoOperationsResult struct {
 // initializes the mongo handler driver
 // similar to how constructors work
 func MongoDB() *MongoDBHandler {
+	logger := log.New(os.Stdout, "[MONGO-DB-DRIVER]: ", log.Ldate|log.Ltime)
+
 	host := helpers.GetEnv("MONGO_DB_HOST", "localhost")
 	port := helpers.GetEnv("MONGO_DB_PORT", "27017")
 	dbName := helpers.GetEnv("MONGO_DB_NAME=", "test")
@@ -113,13 +132,17 @@ func MongoDB() *MongoDBHandler {
 		client:         nil,
 		db:             nil,
 		collection:     nil,
+		logger:         logger,
 	}
 }
 
 // handles connectivity
 func (mh *MongoDBHandler) getConnection() MongoError {
+	mh.logger.Println("Connecting to Mongo Server...")
+
 	if mh.client != nil {
-		return mh.newMongoError(500, "Client was empty")
+		// use the previously initialized connection
+		return MongoError{}
 	}
 
 	clientOptions := options.Client().ApplyURI("mongodb://" + mh.host + ":" + mh.port).
@@ -129,19 +152,29 @@ func (mh *MongoDBHandler) getConnection() MongoError {
 		}).
 		SetSocketTimeout(2 * time.Second)
 
-	client, err := mongo.Connect(context.Background(), clientOptions)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	client, err := mongo.Connect(ctx, clientOptions)
 	if err != nil {
+		mh.logger.Printf("Connection to MongoDB server failed: " + err.Error())
 		return mh.newMongoError(500, err.Error())
 	}
 
-	err = client.Ping(context.Background(), nil)
+	ctxPing, cancelPing := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelPing()
+
+	err = client.Ping(ctxPing, nil)
 	if err != nil {
+		mh.logger.Printf("Ping to MongoDB server failed: " + err.Error())
 		return mh.newMongoError(500, err.Error())
 	}
 
 	mh.client = client
 	mh.db = mh.client.Database(mh.dbName)
 	mh.collection = mh.db.Collection(mh.tableName)
+
+	mh.logger.Println("Connection to Mongo Server succesful!")
 
 	return MongoError{}
 }
@@ -166,7 +199,9 @@ func (mh *MongoDBHandler) Page(page int) *MongoDBHandler {
 
 // provide the limit of records per page
 func (mh *MongoDBHandler) PerPage(perPage int) *MongoDBHandler {
-	mh.perPage = perPage
+	if perPage <= 300 {
+		mh.perPage = perPage
+	}
 	return mh
 }
 
@@ -328,7 +363,7 @@ func (mh *MongoDBHandler) appendTimestamps(data interface{}) interface{} {
 // a slice
 
 func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, MongoError) {
-	if err := mh.getConnection(); err.Status {
+	if err := mh.getConnection(); err.Error != "" {
 		return MongoOperationsResult{}, err
 	}
 
@@ -370,33 +405,91 @@ func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, Mongo
 
 // deletes a mongo db
 func (mh *MongoDBHandler) DropDatabase(dbName string) MongoError {
-	if err := mh.getConnection(); err.Status {
+	if err := mh.getConnection(); err.Error != "" {
 		return err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	err := mh.client.Database(dbName).Drop(ctx)
+	dbs, err := mh.client.ListDatabaseNames(ctx, bson.M{})
 	if err != nil {
-		return mh.newMongoError(500, err.Error())
+		return mh.newMongoError(500, "Unable to list databases. Error: "+err.Error())
+	}
+
+	// Check if dbName is in the list of databases
+	dbExists := false
+	for _, db := range dbs {
+		if db == dbName {
+			dbExists = true
+			break
+		}
+	}
+
+	if !dbExists {
+		return mh.newMongoError(404, "Database not found: "+dbName)
+	}
+
+	err = mh.client.Database(dbName).Drop(ctx)
+	if err != nil {
+		return mh.newMongoError(500, "Unable to drop database: "+dbName+". Error: "+err.Error())
 	}
 
 	return MongoError{}
 }
 
 // deletes a mongo collection / table
-func (mh *MongoDBHandler) DropTable(tableName string) MongoError {
-	if err := mh.getConnection(); err.Status {
+func (mh *MongoDBHandler) DropTable(dbName string, collectionName string) MongoError {
+	if err := mh.getConnection(); err.Error != "" {
 		return err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	databases, databasesErr := mh.ListDatabases()
+	if databasesErr.Error != "" {
+		return mh.newMongoError(500, "Unable to retrieve existing database list: "+databasesErr.Error)
+	}
+
+	dbExists := false
+	for _, db := range databases.Databases {
+		if db == dbName {
+			dbExists = true
+			break
+		}
+	}
+
+	if !dbExists {
+		return mh.newMongoError(404, "Database not found: "+dbName)
+	}
+
+	mh.db = mh.client.Database(dbName)
+
+	tables, tablesErr := mh.ListCollections(dbName)
+
+	if tablesErr.Error != "" {
+		return mh.newMongoError(500, "Unable to retrieve existing table list in specified database: "+tablesErr.Error)
+	}
+
+	tableExists := false
+
+	for _, table := range tables.Tables {
+		if table == collectionName {
+			tableExists = true
+			break
+		}
+	}
+
+	if !tableExists {
+		return mh.newMongoError(404, "Table / collection: "+collectionName+" not found in database: "+dbName)
+	}
+
+	mh.collection = mh.db.Collection(collectionName)
+
 	err := mh.collection.Drop(ctx)
 	if err != nil {
-		return mh.newMongoError(500, err.Error())
+		return mh.newMongoError(500, "Unable to drop collection: "+collectionName+"Error: "+err.Error())
 	}
 
 	return MongoError{}
@@ -419,14 +512,43 @@ func (mh *MongoDBHandler) TotalCount() (int64, error) {
 
 	return totalCount, nil
 }
+func (mh *MongoDBHandler) AndAll(queryInput [][]interface{}) *MongoDBHandler {
+	if len(queryInput) > 0 {
+		for _, item := range queryInput {
+			mh.Where(item[0].(string), item[1].(string), item[2])
+		}
+	}
+
+	return mh
+}
+func (mh *MongoDBHandler) OrAll(queryInput [][]interface{}) *MongoDBHandler {
+	if len(queryInput) > 0 {
+		for _, item := range queryInput {
+			mh.OrWhere(item[0].(string), item[1].(string), item[2])
+		}
+	}
+
+	return mh
+}
+
+func (mh *MongoDBHandler) SortAll(sortInput [][]interface{}) *MongoDBHandler {
+	if len(sortInput) > 0 {
+		for _, item := range sortInput {
+			mh.SortBy(item[0].(string), item[1].(string))
+		}
+	}
+
+	return mh
+}
 
 // a query must be provided beforehand / or NOT
 func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 
 	// connection to the mongodb server
-	if err := mh.getConnection(); err.Status {
+	if err := mh.getConnection(); err.Error != "" {
 		return MongoResults{}, err
 	}
+
 	// 5 sec timeout for the context
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -440,6 +562,9 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 	if len(mh.sort) > 0 {
 		opts.SetSort(mh.sort)
 	}
+
+	opts.SetLimit(int64(mh.perPage))
+	opts.SetSkip(int64((mh.page - 1) * mh.perPage))
 
 	// uses the mh.query chained to the handler
 	cur, err := mh.collection.Find(ctx, mh.query, opts)
@@ -482,12 +607,19 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 	// pagination handling here
 	totalPages := (int(totalCount) + mh.perPage - 1) / mh.perPage
 	currentPage := mh.page
-	nextPage := currentPage + 1
-	if nextPage > totalPages {
-		nextPage = 0
+	prevPage := 1
+	nextPage := 1
+
+	if currentPage > 1 {
+		prevPage = currentPage - 1
+	}
+	if currentPage < totalPages {
+		nextPage = currentPage + 1
 	}
 
+	// GRAB THE QUERY
 	plainQuery, _ := mh.Query()
+
 	// the actual results xoxoxo
 	return MongoResults{
 		Status:   true,
@@ -500,6 +632,7 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 			TotalPages:  totalPages,
 			CurrentPage: currentPage,
 			NextPage:    nextPage,
+			PrevPage:    prevPage,
 			LastPage:    totalPages,
 			PerPage:     mh.perPage,
 		},
@@ -526,7 +659,7 @@ func (mh *MongoDBHandler) newMongoError(code int, err string) MongoError {
 // and a slice of data
 
 func (mh *MongoDBHandler) Update(update interface{}) (MongoOperationsResult, MongoError) {
-	if err := mh.getConnection(); err.Status {
+	if err := mh.getConnection(); !err.Status {
 		return MongoOperationsResult{}, err
 	}
 
@@ -572,7 +705,7 @@ func (mh *MongoDBHandler) newMongoOperations(code int, status bool, operation st
 }
 
 func (mh *MongoDBHandler) UpdateByID(recordId string, data interface{}) (MongoOperationsResult, MongoError) {
-	if err := mh.getConnection(); err.Status {
+	if err := mh.getConnection(); err.Error != "" {
 		return MongoOperationsResult{}, err
 	}
 
@@ -600,7 +733,7 @@ func (mh *MongoDBHandler) UpdateByID(recordId string, data interface{}) (MongoOp
 
 // basically, delete where
 func (mh *MongoDBHandler) Delete(filter interface{}) (MongoOperationsResult, MongoError) {
-	if err := mh.getConnection(); err.Status {
+	if err := mh.getConnection(); !err.Status {
 		return MongoOperationsResult{}, err
 	}
 
@@ -707,7 +840,7 @@ func (mh *MongoDBHandler) First() {
 
 // not finished yet
 func (mh *MongoDBHandler) Aggregate() (MongoResults, MongoError) {
-	if err := mh.getConnection(); err.Status {
+	if err := mh.getConnection(); err.Error != "" {
 		return MongoResults{}, err
 	}
 
@@ -782,5 +915,61 @@ func (mh *MongoDBHandler) AddAggregationStage(stage AggregationStage) *MongoDBHa
 }
 func (mh *MongoDBHandler) ClearAggregationPipeline() *MongoDBHandler {
 	mh.aggregationPipeline = nil
+	return mh
+}
+
+func (mh *MongoDBHandler) ListDatabases() (MongoDatabaseListResult, MongoError) {
+	if err := mh.getConnection(); err.Error != "" {
+		return MongoDatabaseListResult{}, err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	databases, err := mh.client.ListDatabaseNames(ctx, bson.D{}) // looks weird, but it requires an empty document bson.D{}
+	if err != nil {
+		return MongoDatabaseListResult{}, mh.newMongoError(500, err.Error())
+	}
+
+	if len(databases) < 1 {
+		return MongoDatabaseListResult{}, mh.newMongoError(404, "No databases found for this server.")
+	}
+
+	return MongoDatabaseListResult{
+		Status:    true,
+		Code:      200,
+		Databases: databases,
+	}, MongoError{}
+}
+
+func (mh *MongoDBHandler) ListCollections(dbName string) (MongoTablesListResult, MongoError) {
+	if err := mh.getConnection(); err.Error != "" {
+		return MongoTablesListResult{}, err
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// List collection names
+	collections, err := mh.client.Database(dbName).ListCollectionNames(ctx, bson.M{})
+	if err != nil {
+		return MongoTablesListResult{}, mh.newMongoError(500, "Unable to list collections in database: "+dbName+". Error: "+err.Error())
+	}
+
+	if len(collections) < 1 {
+		return MongoTablesListResult{}, mh.newMongoError(200, "No collections found in the database.")
+	}
+
+	return MongoTablesListResult{
+		Status:   true,
+		Code:     200,
+		Database: dbName,
+		Tables:   collections,
+	}, MongoError{}
+}
+
+func (mh *MongoDBHandler) ResetQuery() *MongoDBHandler {
+	if len(mh.query) > 0 {
+		mh.query = nil
+	}
 	return mh
 }
