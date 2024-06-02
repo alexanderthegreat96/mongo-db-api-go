@@ -96,27 +96,18 @@ func main() {
 	// Delete a database
 	mongoApi.DELETE("/db/:db_name/delete", func(c *gin.Context) {
 		dbName := c.Param("db_name")
-		if dbName != "" {
-			unableToWipeDbErr := mongoDb.DropDatabase(dbName)
-			if unableToWipeDbErr.Error != "" {
-				c.JSON(unableToWipeDbErr.Code, responses.GenericErrorResponse{
-					Code:     unableToWipeDbErr.Code,
-					Status:   unableToWipeDbErr.Status,
-					Database: unableToWipeDbErr.Database,
-					Error:    unableToWipeDbErr.Error,
-				})
-			} else {
-				c.JSON(http.StatusOK, responses.DeleteDatabaseSuccessResponse{
-					Status:  true,
-					Message: "Database: " + dbName + " has been deleted!",
-				})
-			}
-
+		unableToWipeDbErr := mongoDb.DropDatabase(dbName)
+		if unableToWipeDbErr.Error != "" {
+			c.JSON(unableToWipeDbErr.Code, responses.GenericErrorResponse{
+				Code:     unableToWipeDbErr.Code,
+				Status:   unableToWipeDbErr.Status,
+				Database: unableToWipeDbErr.Database,
+				Error:    unableToWipeDbErr.Error,
+			})
 		} else {
-			c.JSON(http.StatusBadRequest, responses.GenericErrorResponse{
-				Code:   400,
-				Status: false,
-				Error:  "Failed to provide a database name",
+			c.JSON(http.StatusOK, responses.DeleteDatabaseSuccessResponse{
+				Status:  true,
+				Message: "Database: " + dbName + " has been deleted!",
 			})
 		}
 
@@ -125,26 +116,18 @@ func main() {
 	// list all tables / collections in a database
 	mongoApi.GET("/db/:db_name/tables", func(c *gin.Context) {
 		dbName := c.Param("db_name")
-		if dbName != "" {
-			tablesInDatabase, tablesInDatabaseErr := mongoDb.ListCollections(dbName)
-			if tablesInDatabaseErr.Error != "" {
-				c.JSON(tablesInDatabaseErr.Code, responses.GenericErrorResponse{
-					Code:     tablesInDatabaseErr.Code,
-					Status:   tablesInDatabaseErr.Status,
-					Database: tablesInDatabaseErr.Database,
-					Error:    tablesInDatabaseErr.Error,
-				})
-			} else {
-				c.JSON(tablesInDatabase.Code, responses.TablesInDatabaseResponse{
-					Status: tablesInDatabase.Status,
-					Tables: tablesInDatabase.Tables,
-				})
-			}
+		tablesInDatabase, tablesInDatabaseErr := mongoDb.ListCollections(dbName)
+		if tablesInDatabaseErr.Error != "" {
+			c.JSON(tablesInDatabaseErr.Code, responses.GenericErrorResponse{
+				Code:     tablesInDatabaseErr.Code,
+				Status:   tablesInDatabaseErr.Status,
+				Database: tablesInDatabaseErr.Database,
+				Error:    tablesInDatabaseErr.Error,
+			})
 		} else {
-			c.JSON(http.StatusBadRequest, responses.GenericErrorResponse{
-				Code:   400,
-				Status: false,
-				Error:  "Failed to provide a database name",
+			c.JSON(tablesInDatabase.Code, responses.TablesInDatabaseResponse{
+				Status: tablesInDatabase.Status,
+				Tables: tablesInDatabase.Tables,
 			})
 		}
 
@@ -154,27 +137,20 @@ func main() {
 	mongoApi.DELETE("/db/:db_name/:table_name/delete", func(c *gin.Context) {
 		dbName := c.Param("db_name")
 		tableName := c.Param("table_name")
-		if dbName != "" && tableName != "" {
-			wipeTableErr := mongoDb.DropTable(dbName, tableName)
-			if wipeTableErr.Error != "" {
-				c.JSON(wipeTableErr.Code, responses.GenericErrorResponse{
-					Code:     wipeTableErr.Code,
-					Status:   wipeTableErr.Status,
-					Database: wipeTableErr.Database,
-					Table:    wipeTableErr.Table,
-					Error:    wipeTableErr.Error,
-				})
-			} else {
-				c.JSON(http.StatusOK, responses.WipeTableInDatabaseResponse{
-					Status:  true,
-					Message: "Table / collection: " + tableName + ", dropped!",
-				})
-			}
+
+		wipeTableErr := mongoDb.DropTable(dbName, tableName)
+		if wipeTableErr.Error != "" {
+			c.JSON(wipeTableErr.Code, responses.GenericErrorResponse{
+				Code:     wipeTableErr.Code,
+				Status:   wipeTableErr.Status,
+				Database: wipeTableErr.Database,
+				Table:    wipeTableErr.Table,
+				Error:    wipeTableErr.Error,
+			})
 		} else {
-			c.JSON(http.StatusBadRequest, responses.GenericErrorResponse{
-				Code:   400,
-				Status: false,
-				Error:  "Failed to provide a database name / table name.",
+			c.JSON(http.StatusOK, responses.WipeTableInDatabaseResponse{
+				Status:  true,
+				Message: "Table / collection: " + tableName + ", dropped!",
 			})
 		}
 
@@ -274,6 +250,34 @@ func main() {
 			},
 			Query:   rawQuery,
 			Results: results.Results,
+		})
+	})
+
+	// retrieve a record by ID
+	mongoApi.GET("/db/:db_name/:table_name/get/:mongo_id", func(c *gin.Context) {
+		dbName := c.Param("db_name")
+		tableName := c.Param("table_name")
+		mongoId := c.Param("mongo_id")
+
+		findOne, findOneErr := mongoDb.DB(dbName).Table(tableName).FindById(mongoId)
+
+		if findOneErr.Error != "" {
+			c.JSON(findOneErr.Code, responses.GenericErrorResponse{
+				Code:     findOneErr.Code,
+				Status:   findOneErr.Status,
+				Error:    findOneErr.Error,
+				Database: findOneErr.Database,
+				Table:    findOneErr.Table,
+			})
+			return
+		}
+
+		c.JSON(findOne.Code, responses.SelectSingleResultResponse{
+			Status:   findOne.Status,
+			Code:     findOne.Code,
+			Database: findOne.Database,
+			Table:    findOne.Table,
+			Result:   findOne.Result,
 		})
 	})
 

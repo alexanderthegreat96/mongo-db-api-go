@@ -206,6 +206,52 @@ API_HOST=<api-host>
     }
     ```
 
+### Retrieve Record by ID
+
+```
+GET /db/:db_name/:table_name/get/:mongo_id
+```
+
+### Parameters
+
+- `db_name`: The name of the MongoDB database.
+- `table_name`: The name of the MongoDB collection (table) from which to retrieve the document.
+- `mongo_id`: The unique identifier (MongoDB ObjectID) of the document to retrieve.
+
+### Response
+
+- If the document is found, the server responds with a JSON object containing the retrieved document along with metadata.
+- If the document is not found or an error occurs, an appropriate error response is returned.
+
+#### Success Response Example
+
+```json
+{
+  "Status": "success",
+  "Code": 200,
+  "Database": "example_db",
+  "Table": "example_collection",
+  "Result": {
+    "_id": "6054f06c8a5e3b7d26c4e51e",
+    "name": "John Doe",
+    "age": 30,
+    "email": "john@example.com"
+    // Other document fields
+  }
+}
+```
+
+#### Error Response Example
+
+```json
+{
+  "Code": 404,
+  "Status": "error",
+  "Error": "Document not found",
+  "Database": "example_db",
+  "Table": "example_collection"
+}
+```
 ### Insert Data into a Collection
 
 - **URL:** `/db/:db_name/:table_name/insert`

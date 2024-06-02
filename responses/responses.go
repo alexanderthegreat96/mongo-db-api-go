@@ -59,3 +59,11 @@ type MongoOperationsResultResponse struct {
 	Message   string      `json:"message"`
 	Query     interface{} `json:"query"`
 }
+
+type SelectSingleResultResponse struct {
+	Status   bool        `json:"status"`
+	Code     int         `json:"code"`
+	Database string      `json:"database"`
+	Table    string      `json:"table"`
+	Result   interface{} `json:"result"`
+}
