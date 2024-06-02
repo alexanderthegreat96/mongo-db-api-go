@@ -477,5 +477,92 @@ func main() {
 			Query:     rawQuery,
 		})
 	})
+
+	// Delete record by ID
+	mongoApi.DELETE("/db/:db_name/:table_name/delete/:mongo_id", func(c *gin.Context) {
+		dbName := c.Param("db_name")
+		tableName := c.Param("table_name")
+		mongoId := c.Param("mongo_id")
+
+		deleteById, deleteByIdErr := mongoDb.DB(dbName).Table(tableName).DeleteById(mongoId)
+
+		if deleteByIdErr.Error != "" {
+			c.JSON(deleteByIdErr.Code, responses.GenericErrorResponse{
+				Code:     deleteByIdErr.Code,
+				Status:   deleteByIdErr.Status,
+				Error:    deleteByIdErr.Error,
+				Database: deleteByIdErr.Database,
+				Table:    deleteByIdErr.Table,
+			})
+			return
+		}
+
+		c.JSON(deleteById.Code, responses.MongoOperationsResultResponse{
+			Code:      deleteById.Code,
+			Status:    deleteById.Status,
+			Database:  deleteById.Database,
+			Table:     deleteById.Table,
+			Operation: deleteById.Operation,
+			Message:   deleteById.Message,
+		})
+	})
+
+	// delete by query
+	mongoApi.DELETE("/db/:db_name/:table_name/delete-where", func(c *gin.Context) {
+		dbName := c.Param("db_name")
+		tableName := c.Param("table_name")
+
+		var andQuery [][]interface{}
+
+		if c.Query("query_and") != "" {
+			andQuery = helpers.ParseQuery(c.Query("query_and"))
+		}
+
+		var orQuery [][]interface{}
+
+		if c.Query("query_or") != "" {
+			orQuery = helpers.ParseQuery(c.Query("query_or"))
+		}
+
+		mongoDb.ResetQuery()
+		delete, deleteErr :=
+			mongoDb.
+				DB(dbName).
+				Table(tableName).
+				AndAll(andQuery).
+				OrAll(orQuery).
+				Delete()
+
+		var rawQuery interface{}
+		if deleteErr.Query != "" {
+			rawQuery = json.RawMessage(deleteErr.Query)
+		}
+		if delete.Query != "" {
+			rawQuery = json.RawMessage(delete.Query)
+		}
+
+		if deleteErr.Error != "" {
+			c.JSON(deleteErr.Code, responses.GenericErrorResponse{
+				Code:     deleteErr.Code,
+				Status:   deleteErr.Status,
+				Error:    deleteErr.Error,
+				Database: deleteErr.Database,
+				Table:    deleteErr.Table,
+				Query:    rawQuery,
+			})
+			return
+		}
+
+		c.JSON(delete.Code, responses.MongoOperationsResultResponse{
+			Code:      delete.Code,
+			Status:    delete.Status,
+			Database:  delete.Database,
+			Table:     delete.Table,
+			Operation: delete.Operation,
+			Message:   delete.Message,
+			Query:     rawQuery,
+		})
+	})
+
 	mongoApi.Run(apiHost + ":" + apiPort)
 }

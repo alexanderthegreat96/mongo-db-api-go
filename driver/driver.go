@@ -884,10 +884,45 @@ func (mh *MongoDBHandler) FindById(recordId string) (SingleMongoResult, MongoErr
 
 }
 
-// basically, delete where
-func (mh *MongoDBHandler) Delete(filter interface{}) (MongoOperationsResult, MongoError) {
+// wipes a record by mongo_id
+func (mh *MongoDBHandler) DeleteById(recordId string) (MongoOperationsResult, MongoError) {
 	if mh.client == nil {
-		// connection to the mongodb server
+		if err := mh.getConnection(); err.Error != "" {
+			return MongoOperationsResult{}, err
+		}
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	var filter bson.M
+	findRecord, findRecordErr := mh.FindById(recordId)
+
+	if findRecordErr.Error != "" {
+		return MongoOperationsResult{}, findRecordErr
+	}
+
+	if findRecord.IdType == "mongo" {
+		objID, err := primitive.ObjectIDFromHex(recordId)
+		if err != nil {
+			return MongoOperationsResult{}, mh.newMongoError(500, "Unable to convert string to Mongo ID: "+err.Error())
+		}
+		filter = bson.M{"_id": objID}
+
+	} else {
+		filter = bson.M{"_id": recordId}
+	}
+
+	_, err := mh.collection.DeleteOne(ctx, filter)
+	if err != nil {
+		return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
+	}
+
+	return mh.newMongoOperations(200, true, "deleteByid", "Delete operation performed."), MongoError{}
+}
+
+// basically, delete where
+func (mh *MongoDBHandler) Delete() (MongoOperationsResult, MongoError) {
+	if mh.client == nil {
 		if err := mh.getConnection(); err.Error != "" {
 			return MongoOperationsResult{}, err
 		}
@@ -901,7 +936,7 @@ func (mh *MongoDBHandler) Delete(filter interface{}) (MongoOperationsResult, Mon
 		Strength: 2, // Case-insensitive
 	})
 
-	_, err := mh.collection.DeleteMany(ctx, filter, opts)
+	_, err := mh.collection.DeleteMany(ctx, mh.query, opts)
 	if err != nil {
 		return mh.newMongoOperations(500, false, "delete", "Something happened while deleting: "+err.Error()), MongoError{}
 	}
