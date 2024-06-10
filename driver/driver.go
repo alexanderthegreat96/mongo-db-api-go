@@ -155,7 +155,7 @@ func convertMongoID(id interface{}) string {
 	return fmt.Sprintf("%v", id)
 }
 
-func (mh *MongoDBHandler) TestMongoConnection() bool {
+func (mh *MongoDBHandler) CanConnectToMongo() bool {
 	if mh.client == nil {
 		if err := mh.getConnection(); err.Error != "" {
 			return false
@@ -395,19 +395,30 @@ func (mh *MongoDBHandler) appendTimestamps(data interface{}) interface{} {
 	return data
 }
 
+// used for chunking provided data
+// in order to handle
+// multiple smaller
+// inserts at the same time
+
+func chunkSlice(slice []map[string]interface{}, chunkSize int) [][]map[string]interface{} {
+	var chunks [][]map[string]interface{}
+	for chunkSize < len(slice) {
+		slice, chunks = slice[chunkSize:], append(chunks, slice[0:chunkSize:chunkSize])
+	}
+	chunks = append(chunks, slice)
+	return chunks
+}
+
 // takes as input a data interface
 // can provide 1 or more maps inside
 // a slice
 
 func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, MongoError) {
-
-	fmt.Println(mh.dbName)
-	fmt.Println(mh.tableName)
-
 	if err := mh.getConnection(); err.Error != "" {
 		return MongoOperationsResult{}, err
 	}
 
+	// add timestamps if they are enabled
 	if mh.useTimestamps {
 		switch d := data.(type) {
 		case []map[string]interface{}:
@@ -422,7 +433,20 @@ func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, Mongo
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
+	// checking what data type
+	// we have so that we can
+	// run insertOne / insertMany or even
+	// chunk results if they are too many
+	// to make sue of goroutines for faster
+	// inserts
+
 	switch d := data.(type) {
+
+	// handles a scenario where we recieve a slice of
+	// maps
+	// in other words, multiple elements to insert
+	// ex: [{"user": "mathew", "age": 21}, {"user": "somethone", "age" : 80}]
+
 	case []map[string]interface{}:
 		var interfaceSlice []interface{}
 		for _, item := range d {
@@ -432,11 +456,22 @@ func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, Mongo
 		if err != nil {
 			return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 		}
+
+	// handles single case scenarios
+	// aka {"user": "somethone", "age" : 80}
+
 	case map[string]interface{}:
 		_, err := mh.collection.InsertOne(ctx, d)
 		if err != nil {
 			return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 		}
+
+	// handles cases where
+	// the type might be unpredictable
+	// in terms of how the arrays are structure
+	// so, it's more of a universal
+	// multi insert
+
 	case []interface{}:
 		var interfaceSlice []interface{}
 		for _, item := range d {
