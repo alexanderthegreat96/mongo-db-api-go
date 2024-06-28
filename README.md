@@ -4,6 +4,7 @@ MongoDB API is a Go-Based backend that serves as a nieche method for interacting
 retrieve data even faster. The project is a WIP so treat it as such.
 
 ![alt text](insert-test.png)
+![alt text](insert-result.png)
 
 ## Table of Contents
 
