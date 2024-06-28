@@ -6,8 +6,10 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math/rand"
 	"os"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/alexanderthegreat96/mongo-db-api-go/helpers"
@@ -375,6 +377,9 @@ func (mh *MongoDBHandler) appendTimestamps(data interface{}) interface{} {
 	case []interface{}:
 		for _, item := range d {
 			if itemMap, ok := item.(map[string]interface{}); ok {
+				if itemMap == nil {
+					itemMap = make(map[string]interface{})
+				}
 				if _, exists := itemMap["created_at"]; !exists {
 					itemMap["created_at"] = mh.timeNow
 				}
@@ -383,7 +388,23 @@ func (mh *MongoDBHandler) appendTimestamps(data interface{}) interface{} {
 				}
 			}
 		}
+	case []map[string]interface{}:
+		for i, itemMap := range d {
+			if itemMap == nil {
+				itemMap = make(map[string]interface{})
+				d[i] = itemMap
+			}
+			if _, exists := itemMap["created_at"]; !exists {
+				itemMap["created_at"] = mh.timeNow
+			}
+			if _, exists := itemMap["updated_at"]; !exists {
+				itemMap["updated_at"] = mh.timeNow
+			}
+		}
 	case map[string]interface{}:
+		if d == nil {
+			d = make(map[string]interface{})
+		}
 		if _, exists := d["created_at"]; !exists {
 			d["created_at"] = mh.timeNow
 		}
@@ -409,68 +430,90 @@ func chunkSlice(slice []map[string]interface{}, chunkSize int) [][]map[string]in
 	return chunks
 }
 
-// takes as input a data interface
-// can provide 1 or more maps inside
-// a slice
+func (mh *MongoDBHandler) insertChunk(ctx context.Context, chunk []map[string]interface{}, wg *sync.WaitGroup, resultCh chan<- MongoOperationsResult, errCh chan<- MongoError) {
+	defer wg.Done()
 
+	var interfaceSlice []interface{}
+	for _, item := range chunk {
+		interfaceSlice = append(interfaceSlice, item)
+	}
+
+	_, err := mh.collection.InsertMany(ctx, interfaceSlice)
+	if err != nil {
+		errCh <- mh.newMongoError(500, err.Error())
+		return
+	}
+
+	resultCh <- mh.newMongoOperations(200, true, "insert", "Chunk insert performed.")
+}
+
+// split the batch into a number that is percentage based
+func calculateBatchSize(totalRecords int, percentage float64) int {
+	batchSize := int(float64(totalRecords) * percentage / 100.0)
+	return batchSize
+
+}
+
+// need this for the function above
+func countRecords(data interface{}) int {
+	switch d := data.(type) {
+	case []map[string]interface{}:
+		return len(d)
+	case map[string]interface{}:
+		return 1
+	case []interface{}:
+		return len(d)
+	default:
+		return 0
+	}
+}
+
+// actual insert scaled across goroutines
 func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, MongoError) {
 	if err := mh.getConnection(); err.Error != "" {
 		return MongoOperationsResult{}, err
 	}
 
-	// add timestamps if they are enabled
+	totalRecords := countRecords(data)
+
+	// // add timestamps if they are enabled
 	if mh.useTimestamps {
-		switch d := data.(type) {
-		case []map[string]interface{}:
-			for i := range d {
-				d[i] = mh.appendTimestamps(d[i]).(map[string]interface{})
-			}
-		case map[string]interface{}:
-			data = mh.appendTimestamps(d).(map[string]interface{})
-		}
+		data = mh.appendTimestamps(data)
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// checking what data type
-	// we have so that we can
-	// run insertOne / insertMany or even
-	// chunk results if they are too many
-	// to make sue of goroutines for faster
-	// inserts
-
 	switch d := data.(type) {
-
-	// handles a scenario where we recieve a slice of
-	// maps
-	// in other words, multiple elements to insert
-	// ex: [{"user": "mathew", "age": 21}, {"user": "somethone", "age" : 80}]
-
 	case []map[string]interface{}:
-		var interfaceSlice []interface{}
-		for _, item := range d {
-			interfaceSlice = append(interfaceSlice, item)
-		}
-		_, err := mh.collection.InsertMany(ctx, interfaceSlice)
-		if err != nil {
-			return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
+		splitThisIn := calculateBatchSize(totalRecords, 30.0) // batch size based on 30% of the record count
+		chunks := chunkSlice(d, splitThisIn)                  // will split this in whatever value our function returns
+		var wg sync.WaitGroup
+		resultCh := make(chan MongoOperationsResult, len(chunks))
+		errCh := make(chan MongoError, len(chunks))
+
+		for _, chunk := range chunks {
+			wg.Add(1)
+			go mh.insertChunk(ctx, chunk, &wg, resultCh, errCh)
 		}
 
-	// handles single case scenarios
-	// aka {"user": "somethone", "age" : 80}
+		wg.Wait()
+		close(resultCh)
+		close(errCh)
+
+		for err := range errCh {
+			if err.Error != "" {
+				return MongoOperationsResult{}, err
+			}
+		}
+
+		return mh.newMongoOperations(200, true, "insert", "All inserts performed."), MongoError{}
 
 	case map[string]interface{}:
 		_, err := mh.collection.InsertOne(ctx, d)
 		if err != nil {
 			return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 		}
-
-	// handles cases where
-	// the type might be unpredictable
-	// in terms of how the arrays are structure
-	// so, it's more of a universal
-	// multi insert
 
 	case []interface{}:
 		var interfaceSlice []interface{}
@@ -485,8 +528,9 @@ func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, Mongo
 		if err != nil {
 			return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 		}
+
 	default:
-		return MongoOperationsResult{}, mh.newMongoError(400, "unsuported data type")
+		return MongoOperationsResult{}, mh.newMongoError(400, "unsupported data type")
 	}
 
 	return mh.newMongoOperations(200, true, "insert", "Insert performed."), MongoError{}
@@ -652,7 +696,7 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// need case insensitive so we're applyhing this
+	// need case insensitive so we're applying this
 	opts := options.Find().SetCollation(&options.Collation{
 		Locale:   "en",
 		Strength: 2, // Case-insensitive
@@ -1242,3 +1286,65 @@ func (mh *MongoDBHandler) ResetState() *MongoDBHandler {
 // 	// in mongo
 // 	// then, should be able to return whatever the result was
 // }
+
+// testng stuff
+// do not use it unless you actually want to benchmark
+// this is all GPT generated so don't judge.
+func GenerateRandomData(numRecords int) []map[string]interface{} {
+	data := make([]map[string]interface{}, numRecords)
+
+	for i := 0; i < numRecords; i++ {
+		// Generate random map for each record
+		data[i] = generateRandomMap()
+	}
+
+	return data
+}
+
+func generateRandomMap() map[string]interface{} {
+	rand.Seed(time.Now().UnixNano())
+
+	// Example keys and possible value types
+	keys := []string{"name", "age", "email", "address", "phone"}
+
+	// Initialize map
+	m := make(map[string]interface{})
+
+	// Generate random key-value pairs
+	for _, key := range keys {
+		switch key {
+		case "name":
+			m[key] = generateRandomName()
+		case "age":
+			m[key] = rand.Intn(100) // Random age between 0 and 99
+		case "email":
+			m[key] = generateRandomEmail()
+		case "address":
+			m[key] = generateRandomAddress()
+		case "phone":
+			m[key] = generateRandomPhone()
+		}
+	}
+
+	return m
+}
+
+func generateRandomName() string {
+	names := []string{"Alice", "Bob", "Charlie", "David", "Eve", "Frank", "Grace", "Helen", "Ian", "Jack"}
+	return names[rand.Intn(len(names))]
+}
+
+func generateRandomEmail() string {
+	domains := []string{"example.com", "test.com", "domain.com", "mail.com"}
+	return fmt.Sprintf("%s%d@%s", generateRandomName(), rand.Intn(1000), domains[rand.Intn(len(domains))])
+}
+
+func generateRandomAddress() string {
+	streets := []string{"123 Main St", "456 Elm St", "789 Oak Ave", "321 Pine Blvd"}
+	cities := []string{"New York", "Los Angeles", "Chicago", "Houston"}
+	return fmt.Sprintf("%s, %s, USA", streets[rand.Intn(len(streets))], cities[rand.Intn(len(cities))])
+}
+
+func generateRandomPhone() string {
+	return fmt.Sprintf("+1-555-%04d", rand.Intn(10000))
+}
