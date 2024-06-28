@@ -11,9 +11,11 @@ import (
 func main() {
 	godotenv.Load()
 
+	// generates 2kkk records
 	data := driver.GenerateRandomData(2000000)
 	start := time.Now()
 
+	// should result in about 4.92 seconds
 	mh := driver.MongoDB()
 	result, err := mh.Insert(data)
 	if err.Error != "" {

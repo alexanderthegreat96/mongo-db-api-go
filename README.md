@@ -1,6 +1,9 @@
 # MongoDB API
 
-MongoDB API is a RESTful API service for interacting with MongoDB databases. This API allows you to list databases, delete databases, list collections, delete collections, retrieve data, insert data, update data, and delete data by ID or query.
+MongoDB API is a Go-Based backend that serves as a nieche method for interacting with MongoDB through an API directly or through the pre-built clients. It's quite fast. It is capable of inseting 2kkk records in under 5 seconds through the AID of goroutines and 
+retrieve data even faster. The project is a WIP so treat it as such.
+
+![alt text](insert-test.png)
 
 ## Table of Contents
 
