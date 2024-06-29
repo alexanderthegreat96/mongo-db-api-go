@@ -688,115 +688,105 @@ func (mh *MongoDBHandler) SortAll(sortInput [][]interface{}) *MongoDBHandler {
 // a query must be provided beforehand / or NOT
 func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 	if mh.client == nil {
-		// connection to the mongodb server
 		if err := mh.getConnection(); err.Error != "" {
 			return MongoResults{}, err
 		}
 	}
 
-	// 5 sec timeout for the context
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// need case insensitive so we're applying this
 	opts := options.Find().SetCollation(&options.Collation{
 		Locale:   "en",
 		Strength: 2, // Case-insensitive
 	})
 
+	// Apply sorting, pagination, and limit/skip options
 	if len(mh.sort) > 0 {
 		opts.SetSort(mh.sort)
 	}
-
 	opts.SetLimit(int64(mh.perPage))
 	opts.SetSkip(int64((mh.page - 1) * mh.perPage))
 
-	// uses the mh.query chained to the handler
-	cur, err := mh.collection.Find(ctx, mh.query, opts)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return MongoResults{}, mh.newMongoError(404, "No results found")
+	// channel that holds the results
+	resultsChan := make(chan []map[string]interface{}, 1) // results
+	errChan := make(chan error, 1)                        // errors
+
+	// will execute operations concurrently
+	go func() {
+		cur, err := mh.collection.Find(ctx, mh.query, opts)
+		if err != nil {
+			errChan <- err
+			return
 		}
+		defer cur.Close(ctx)
+
+		var results []map[string]interface{}
+
+		// Decode documents concurrently
+		for cur.Next(ctx) {
+			var result map[string]interface{}
+			if err := cur.Decode(&result); err != nil {
+				errChan <- err
+				return
+			}
+			results = append(results, result)
+		}
+
+		// Check for errors during iteration
+		if err := cur.Err(); err != nil {
+			errChan <- err
+			return
+		}
+
+		resultsChan <- results // will send the res to the res channel
+	}()
+
+	// handling any errors from the goroutine
+	select {
+	case err := <-errChan:
 		return MongoResults{}, mh.newMongoError(500, err.Error())
-	}
-	defer cur.Close(ctx)
-
-	// results slice
-	var results []map[string]interface{}
-
-	// decode documents
-	for cur.Next(ctx) {
-		var result map[string]interface{}
-		if err := cur.Decode(&result); err != nil {
+	case <-time.After(5 * time.Second): // just a timeout for the goroutine
+		return MongoResults{}, mh.newMongoError(500, "Timeout while fetching results")
+	case results := <-resultsChan:
+		totalCount, err := mh.TotalCount()
+		if err != nil {
 			return MongoResults{}, mh.newMongoError(500, err.Error())
 		}
-		results = append(results, result)
-	}
 
-	// iteration errors
-	if err := cur.Err(); err != nil {
-		return MongoResults{}, mh.newMongoError(500, err.Error())
-	}
+		// Pagination handling
+		totalPages := (int(totalCount) + mh.perPage - 1) / mh.perPage
+		currentPage := mh.page
+		prevPage := 1
+		nextPage := 1
 
-	// Get the total count of documents
-	totalCount, err := mh.TotalCount()
-	if err != nil {
-		return MongoResults{}, mh.newMongoError(500, err.Error())
-	}
+		if currentPage > 1 {
+			prevPage = currentPage - 1
+		}
+		if currentPage < totalPages {
+			nextPage = currentPage + 1
+		}
 
-	// should check if there's anything to be returned
-	if len(results) == 0 {
-		return MongoResults{}, mh.newMongoError(404, "No results found.")
-	}
+		// Get the plain query for logging or debugging
+		plainQuery, _ := mh.Query()
 
-	// pagination handling here
-	totalPages := (int(totalCount) + mh.perPage - 1) / mh.perPage
-	currentPage := mh.page
-	prevPage := 1
-	nextPage := 1
-
-	if currentPage > 1 {
-		prevPage = currentPage - 1
-	}
-	if currentPage < totalPages {
-		nextPage = currentPage + 1
-	}
-
-	// GRAB THE QUERY
-	plainQuery, _ := mh.Query()
-
-	// the actual results xoxoxo
-	return MongoResults{
-		Status:   true,
-		Code:     200,
-		Database: mh.dbName,
-		Table:    mh.tableName,
-		Count:    totalCount,
-		Results:  results,
-		Pagination: MongoResultPagination{
-			TotalPages:  totalPages,
-			CurrentPage: currentPage,
-			NextPage:    nextPage,
-			PrevPage:    prevPage,
-			LastPage:    totalPages,
-			PerPage:     mh.perPage,
-		},
-		Query: plainQuery,
-	}, MongoError{}
-}
-
-// map the erros and the code
-// to avoid repetitions and code
-// cluttering
-func (mh *MongoDBHandler) newMongoError(code int, err string) MongoError {
-	plainQuery, _ := mh.Query()
-	return MongoError{
-		Status:   false,
-		Code:     code,
-		Database: mh.dbName,
-		Table:    mh.tableName,
-		Error:    err,
-		Query:    plainQuery,
+		return MongoResults{
+			Status:   true,
+			Code:     200,
+			Database: mh.dbName,
+			Table:    mh.tableName,
+			Count:    totalCount,
+			Results:  results,
+			Pagination: MongoResultPagination{
+				TotalPages:  totalPages,
+				CurrentPage: currentPage,
+				NextPage:    nextPage,
+				PrevPage:    prevPage,
+				LastPage:    totalPages,
+				PerPage:     mh.perPage,
+			},
+			Query: plainQuery,
+		}, MongoError{}
 	}
 }
 
@@ -1318,6 +1308,16 @@ func (mh *MongoDBHandler) ResetState() *MongoDBHandler {
 	}
 
 	return mh
+}
+
+func (mh *MongoDBHandler) newMongoError(code int, err string) MongoError {
+	return MongoError{
+		Status:   false,
+		Code:     code,
+		Database: mh.dbName,
+		Table:    mh.tableName,
+		Error:    err,
+	}
 }
 
 // func (mh *MongoDBHandler) ExecuteQuery(queryString string) {
