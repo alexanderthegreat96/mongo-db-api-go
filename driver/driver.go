@@ -181,8 +181,8 @@ func (mh *MongoDBHandler) getConnection() MongoError {
 			Username: mh.username,
 			Password: mh.password,
 		}).
-		SetMaxPoolSize(10).
-		SetSocketTimeout(2 * time.Second)
+		SetMaxPoolSize(15).
+		SetSocketTimeout(3 * time.Second)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -260,27 +260,29 @@ func (mh *MongoDBHandler) Where(field string, operator string, value interface{}
 		return mh
 	}
 
+	if mh.query == nil {
+		mh.query = make(map[string]interface{})
+	}
+
 	// basically, merge multiple Where conditions into $and
 	// if multiple calls to .Where are placed
 	if mh.multipleWheres {
 		andCondition := make([]interface{}, 0)
-		if mh.query != nil {
-			for key, val := range mh.query {
-				if key != "$and" {
-					andCondition = append(andCondition, map[string]interface{}{key: val})
-				}
+		if existingConditions, exists := mh.query["$and"]; exists {
+			if conditionsArray, isArray := existingConditions.([]interface{}); isArray {
+				andCondition = append(andCondition, conditionsArray...)
 			}
+			// else {
+			// 	fmt.Println("Warning: $and exists but is not an array this shit should not happen")
+			// }
 		}
-		andCondition = append(andCondition, map[string]interface{}{field: mappedValue})
 
-		mh.query = map[string]interface{}{
-			"$and": andCondition,
-		}
+		andCondition = append(andCondition, map[string]interface{}{field: mappedValue})
+		mh.query["$and"] = andCondition
 	} else {
 		mh.query[field] = mappedValue
 		mh.multipleWheres = true
 	}
-
 	return mh
 }
 
@@ -1023,24 +1025,65 @@ func (mh *MongoDBHandler) Delete() (MongoOperationsResult, MongoError) {
 	return mh.newMongoOperations(200, false, "delete", "Document deleted"), MongoError{}
 }
 
-// map the operator with the value
-// to reduce code cluttering
+// map the operators with the value
 func mapOperators(operator string, value interface{}) (interface{}, error) {
+	// Create the operator map without the "between" key initially
 	operatorMap := map[string]interface{}{
-		"=":    value,
-		"!=":   map[string]interface{}{"$ne": value},
-		"<":    map[string]interface{}{"$lt": value},
-		"<=":   map[string]interface{}{"$lte": value},
-		">":    map[string]interface{}{"$gt": value},
-		">=":   map[string]interface{}{"$gte": value},
-		"like": map[string]interface{}{"$regex": value},
+		"=":             map[string]interface{}{"$eq": value, "$options": "i"},
+		"!=":            map[string]interface{}{"$ne": value},
+		"<>":            map[string]interface{}{"$ne": value},
+		"<":             map[string]interface{}{"$lt": value},
+		"<=":            map[string]interface{}{"$lte": value},
+		">":             map[string]interface{}{"$gt": value},
+		">=":            map[string]interface{}{"$gte": value},
+		"like":          map[string]interface{}{"$regex": value},
+		"not_like":      map[string]interface{}{"$not": map[string]interface{}{"$regex": value}},
+		"ilike":         map[string]interface{}{"$regex": value, "$options": "i"}, // case insensitive like
+		"&":             map[string]interface{}{"$bitsAllSet": value},
+		"|":             map[string]interface{}{"$bitsAnySet": value},
+		"^":             map[string]interface{}{"$bitsAllClear": value},
+		"<<":            map[string]interface{}{"$bitsAllClear": value},
+		">>":            map[string]interface{}{"$bitsAnyClear": value},
+		"rlike":         map[string]interface{}{"$regex": value},
+		"regexp":        map[string]interface{}{"$regex": value},
+		"not_regexp":    map[string]interface{}{"$not": map[string]interface{}{"$regex": value}},
+		"exists":        map[string]interface{}{"$exists": value},
+		"type":          map[string]interface{}{"$type": value},
+		"mod":           map[string]interface{}{"$mod": value},
+		"where":         map[string]interface{}{"$where": value},
+		"all":           map[string]interface{}{"$all": value},
+		"size":          map[string]interface{}{"$size": value},
+		"regex":         map[string]interface{}{"$regex": value},
+		"not_regex":     map[string]interface{}{"$not": map[string]interface{}{"$regex": value}},
+		"text":          map[string]interface{}{"$text": value},
+		"slice":         map[string]interface{}{"$slice": value},
+		"elemmatch":     map[string]interface{}{"$elemMatch": value},
+		"geowithin":     map[string]interface{}{"$geoWithin": value},
+		"geointersects": map[string]interface{}{"$geoIntersects": value},
+		"near":          map[string]interface{}{"$near": value},
+		"nearsphere":    map[string]interface{}{"$nearSphere": value},
+		"geometry":      map[string]interface{}{"$geometry": value},
+		"maxdistance":   map[string]interface{}{"$maxDistance": value},
+		"center":        map[string]interface{}{"$center": value},
+		"centersphere":  map[string]interface{}{"$centerSphere": value},
+		"box":           map[string]interface{}{"$box": value},
+		"polygon":       map[string]interface{}{"$polygon": value},
+		"uniquedocs":    map[string]interface{}{"$uniqueDocs": value},
+	}
+	if operator == "between" {
+		v, ok := value.([]interface{})
+		if !ok || len(v) != 2 {
+			return nil, errors.New("value must be a slice with exactly two elements for 'between'")
+		}
+		return map[string]interface{}{"$gte": v[0], "$lte": v[1]}, nil
 	}
 
-	if _, ok := operatorMap[operator]; ok {
-		return operatorMap[operator], nil
+	mappedValue, exists := operatorMap[operator]
+	if !exists {
+		return nil, fmt.Errorf("unknown operator: %s", operator)
 	}
 
-	return nil, errors.New("unrecognized operator")
+	return mappedValue, nil
 }
 
 // spits out the query

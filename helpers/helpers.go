@@ -43,51 +43,113 @@ func convertStringToType(value string) interface{} {
 }
 
 func ParseQuery(queryString string) [][]interface{} {
-	operators := []string{"=", "!=", ">=", "<=", "<", ">", "like", "_like_"}
+	operators := []string{
+		"=",
+		"!=",
+		"<>",
+		"<",
+		"<=",
+		">",
+		">=",
+		"like",
+		"_like_",
+		"_i_like_",
+		"not_like",
+		"ilike",
+		"&",
+		"|",
+		"^",
+		"<<",
+		">>",
+		"rlike",
+		"regexp",
+		"not_regexp",
+		"exists",
+		"type",
+		"mod",
+		"where",
+		"all",
+		"size",
+		"regex",
+		"not_regex",
+		"text",
+		"slice",
+		"elemmatch",
+		"geowithin",
+		"geointersects",
+		"near",
+		"nearsphere",
+		"geometry",
+		"maxdistance",
+		"center",
+		"centersphere",
+		"box",
+		"polygon",
+		"uniquedocs",
+		"between",
+	}
 
-	// slice of slices that cant contain
-	// multiple data types
 	var parsed [][]interface{}
 
+	// only removing the outer brackets
 	if strings.HasPrefix(queryString, "[") && strings.HasSuffix(queryString, "]") {
-		queryString = strings.ReplaceAll(queryString, "[", "")
-		queryString = strings.ReplaceAll(queryString, "]", "")
+		queryString = queryString[1 : len(queryString)-1]
+	}
 
-		if strings.Contains(queryString, "|") {
-			items := strings.Split(queryString, "|")
-			if len(items) > 0 {
-				for _, item := range items {
-					parts := strings.Split(item, ",")
-					if len(parts) == 3 {
-						key := strings.TrimSpace(ToString(parts[0]))
-						operator := strings.TrimSpace(ToString(parts[1]))
-						value := strings.TrimSpace(ToString(parts[2]))
+	if strings.Contains(queryString, "|") {
+		items := strings.Split(queryString, "|")
+		if len(items) > 0 {
+			for _, item := range items {
+				parts := strings.Split(item, ",")
+				if len(parts) == 3 {
+					key := strings.TrimSpace(ToString(parts[0]))
+					operator := strings.TrimSpace(ToString(parts[1]))
+					value := strings.TrimSpace(ToString(parts[2]))
 
-						if foundInList(operator, operators) {
+					if foundInList(operator, operators) {
+						if operator == "between" {
+							value = strings.ReplaceAll(value, "[", "")
+							value = strings.ReplaceAll(value, "]", "")
+							betweenParts := strings.Split(value, ":")
+							if len(betweenParts) == 2 {
+								low := convertStringToType(strings.TrimSpace(betweenParts[0]))
+								high := convertStringToType(strings.TrimSpace(betweenParts[1]))
+								parsed = append(parsed, []interface{}{key, operator, []interface{}{low, high}})
+							}
+						} else {
 							operator = strings.ReplaceAll(operator, "_", "")
 							parsed = append(parsed, []interface{}{key, operator, convertStringToType(value)})
 						}
 					}
 				}
 			}
-		} else {
-			parts := strings.Split(queryString, ",")
-			if len(parts) == 3 {
-				key := strings.TrimSpace(ToString(parts[0]))
-				operator := strings.TrimSpace(ToString(parts[1]))
-				value := strings.TrimSpace(ToString(parts[2]))
+		}
+	} else {
+		parts := strings.Split(queryString, ",")
+		if len(parts) == 3 {
+			key := strings.TrimSpace(ToString(parts[0]))
+			operator := strings.TrimSpace(ToString(parts[1]))
+			value := strings.TrimSpace(ToString(parts[2]))
 
-				if foundInList(operator, operators) {
+			if foundInList(operator, operators) {
+				if operator == "between" {
+					value = strings.ReplaceAll(value, "[", "")
+					value = strings.ReplaceAll(value, "]", "")
+					betweenParts := strings.Split(value, ":")
+					if len(betweenParts) == 2 {
+						low := convertStringToType(strings.TrimSpace(betweenParts[0]))
+						high := convertStringToType(strings.TrimSpace(betweenParts[1]))
+						parsed = append(parsed, []interface{}{key, operator, []interface{}{low, high}})
+					}
+				} else {
 					operator = strings.ReplaceAll(operator, "_", "")
 					parsed = append(parsed, []interface{}{key, operator, convertStringToType(value)})
 				}
 			}
 		}
-
-		return parsed
 	}
 
-	return nil
+	return parsed
 }
 
 func ParseSort(queryString string) [][]interface{} {

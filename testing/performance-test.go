@@ -9,10 +9,10 @@ import (
 )
 
 func main() {
-	godotenv.Load()
+	godotenv.Load("../.env")
 
-	// generates 2kkk records
-	data := driver.GenerateRandomData(2000000)
+	// generates 5kkk records
+	data := driver.GenerateRandomData(5000000)
 	start := time.Now()
 
 	// should result in about 4.92 seconds
