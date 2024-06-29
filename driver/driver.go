@@ -1017,7 +1017,6 @@ func (mh *MongoDBHandler) Delete() (MongoOperationsResult, MongoError) {
 
 // map the operators with the value
 func mapOperators(operator string, value interface{}) (interface{}, error) {
-	// Create the operator map without the "between" key initially
 	operatorMap := map[string]interface{}{
 		"=":             map[string]interface{}{"$eq": value, "$options": "i"},
 		"!=":            map[string]interface{}{"$ne": value},
@@ -1060,6 +1059,9 @@ func mapOperators(operator string, value interface{}) (interface{}, error) {
 		"polygon":       map[string]interface{}{"$polygon": value},
 		"uniquedocs":    map[string]interface{}{"$uniqueDocs": value},
 	}
+	// had to map separately due to between
+	// having 2 values instead of one
+	// Where("age", "between", []interface{}{25, 60})
 	if operator == "between" {
 		v, ok := value.([]interface{})
 		if !ok || len(v) != 2 {
