@@ -62,9 +62,6 @@ func main() {
 	logger.Println("API Information:")
 	logger.Println("You may start sending requests to: http://" + apiHost + ":" + apiPort)
 
-	// remove when NOT compiling
-	// gin.SetMode(gin.ReleaseMode)
-
 	// boot the actual API
 	api.RunApi(*mongoDb, apiHost, apiPort)
 }
