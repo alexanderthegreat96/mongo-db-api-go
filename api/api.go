@@ -126,9 +126,14 @@ func RunApi(mongoDb driver.MongoDBHandler, apiHost string, apiPort string) {
 		}
 
 		var sort [][]interface{}
+		group := ""
 
 		if c.Query("sort") != "" {
 			sort = helpers.ParseSort(c.Query("sort"))
+		}
+
+		if c.Query("group_by") != "" {
+			group = c.Query("group_by")
 		}
 
 		var andQuery [][]interface{}
@@ -155,6 +160,7 @@ func RunApi(mongoDb driver.MongoDBHandler, apiHost string, apiPort string) {
 				AndAll(andQuery).
 				OrAll(orQuery).
 				SortAll(sort).
+				GroupAll(group).
 				Find()
 
 		var rawQuery interface{}

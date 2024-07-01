@@ -32,6 +32,7 @@ type MongoDBHandler struct {
 	page                int
 	sort                []primitive.E
 	query               map[string]interface{}
+	aggregateQuery      []interface{}
 	aggregationPipeline []AggregationStage
 	multipleWheres      bool
 	host                string
@@ -134,6 +135,7 @@ func MongoDB() *MongoDBHandler {
 		page:           1,
 		sort:           []primitive.E{},
 		query:          make(map[string]interface{}),
+		aggregateQuery: []interface{}{},
 		multipleWheres: false,
 		host:           host,
 		port:           port,
@@ -332,33 +334,75 @@ func (mh *MongoDBHandler) SortBy(field, order string) *MongoDBHandler {
 
 // Group By
 func (mh *MongoDBHandler) GroupBy(field string) *MongoDBHandler {
-	// should add sorting data as well
+	var pipeline []interface{}
+
+	// match stage or filetering based on the existing query
+	if len(mh.query) > 0 {
+		matchConditions := map[string]interface{}{}
+		for index, item := range mh.query {
+			// handle where the query elements are not
+			// grouped under $and or $or
+			if index != "$and" && index != "$or" {
+				matchConditions[index] = item
+			} else {
+				// loop over $and / $or
+				if _, ok := mh.query["$and"]; ok {
+					for _, data := range mh.query["$and"].([]interface{}) {
+						if _, ok := data.(map[string]interface{}); ok {
+							for colName, colVal := range data.(map[string]interface{}) {
+								matchConditions[colName] = colVal
+							}
+						}
+					}
+				}
+
+				if _, ok := mh.query["$or"]; ok {
+					for _, data := range mh.query["$or"].([]interface{}) {
+						if _, ok := data.(map[string]interface{}); ok {
+							for colName, colVal := range data.(map[string]interface{}) {
+								matchConditions[colName] = colVal
+							}
+						}
+					}
+				}
+			}
+		}
+		matchStage := map[string]interface{}{
+			"$match": matchConditions,
+		}
+		pipeline = append(pipeline, matchStage)
+
+		// pagination
+		skipStage := bson.M{
+			"$skip": (mh.page - 1) * mh.perPage,
+		}
+		limitStage := bson.M{
+			"$limit": mh.perPage,
+		}
+		pipeline = append(pipeline, skipStage, limitStage)
+
+		// actual grouping by whatever key
+		groupStage := map[string]interface{}{
+			"$group": map[string]interface{}{
+				"_id": "$" + field,
+				"records": map[string]interface{}{
+					"$push": "$$ROOT",
+				},
+			},
+		}
+		pipeline = append(pipeline, groupStage)
+	}
+
+	// sorting if provided
 	if len(mh.sort) > 0 {
-		sortCriteria := make(bson.D, len(mh.sort))
-
-		for i, element := range mh.sort {
-			sortCriteria[i] = bson.E{Key: element.Key, Value: element.Value}
+		sortStage := map[string]interface{}{
+			"$sort": mh.sort,
 		}
-
-		sortStage := bson.D{
-			{Key: "$sort", Value: sortCriteria},
-		}
-
-		mh.aggregationPipeline = append(mh.aggregationPipeline, AggregationStage{"$sort", sortStage})
+		pipeline = append(pipeline, sortStage)
 	}
 
-	// implement $match
-	// $match should contain anything that is handled by
-	// query basically
-
-	groupStage := bson.D{
-		{Key: "$group", Value: bson.D{
-			{Key: "_id", Value: "$" + field},
-		}},
-	}
-
-	mh.aggregationPipeline = append(mh.aggregationPipeline, AggregationStage{"$group", groupStage})
-
+	mh.aggregateQuery = pipeline
+	//fmt.Println(dataToJSON(pipeline))
 	return mh
 }
 
@@ -685,6 +729,14 @@ func (mh *MongoDBHandler) SortAll(sortInput [][]interface{}) *MongoDBHandler {
 	return mh
 }
 
+func (mh *MongoDBHandler) GroupAll(groupInput string) *MongoDBHandler {
+	if groupInput != "" {
+		mh.GroupBy(groupInput)
+	}
+
+	return mh
+}
+
 // a query must be provided beforehand / or NOT
 func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 	if mh.client == nil {
@@ -714,7 +766,16 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 
 	// will execute operations concurrently
 	go func() {
-		cur, err := mh.collection.Find(ctx, mh.query, opts)
+		var cur *mongo.Cursor
+		var err error
+
+		if len(mh.aggregateQuery) > 0 {
+			mh.logger.Println("Running aggregate query...")
+			cur, err = mh.collection.Aggregate(ctx, mh.aggregateQuery)
+		} else {
+			mh.logger.Println("Running filter query...")
+			cur, err = mh.collection.Find(ctx, mh.query, opts)
+		}
 		if err != nil {
 			errChan <- err
 			return
@@ -767,7 +828,6 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 			nextPage = currentPage + 1
 		}
 
-		// Get the plain query for logging or debugging
 		plainQuery, _ := mh.Query()
 
 		return MongoResults{
@@ -1080,36 +1140,8 @@ func mapOperators(operator string, value interface{}) (interface{}, error) {
 
 // spits out the query
 func (mh *MongoDBHandler) Query() (string, error) {
-	if len(mh.aggregationPipeline) > 0 {
-		pipeline := make([]interface{}, len(mh.aggregationPipeline))
-		for i, stage := range mh.aggregationPipeline {
-			pipeline[i] = bson.D{{Key: stage.StageName, Value: stage.Params}}
-		}
-
-		query := bson.D{}
-		if len(mh.query) > 0 {
-			query = append(query, bson.E{Key: "$match", Value: mh.query})
-		}
-
-		if len(mh.sort) > 0 {
-			query = append(query, bson.E{Key: "$sort", Value: mh.sort})
-		}
-
-		// will be coming back to this
-		if len(mh.aggregationPipeline) > 0 {
-			var groupContents string
-			for _, stage := range mh.aggregationPipeline {
-				if stage.StageName == "$group" {
-					fmt.Println(stage.Params)
-				}
-			}
-
-			if groupContents != "" {
-				query = append(query, bson.E{Key: "$group", Value: bson.D{{Key: "_id", Value: groupContents}}})
-			}
-		}
-
-		jsonData, err := bson.MarshalExtJSON(query, false, false)
+	if len(mh.aggregateQuery) > 0 {
+		jsonData, err := json.Marshal(mh.aggregateQuery)
 		if err != nil {
 			return "", err
 		}
@@ -1279,6 +1311,9 @@ func (mh *MongoDBHandler) ListCollections(dbName string) (MongoTablesListResult,
 }
 
 func (mh *MongoDBHandler) ResetQuery() *MongoDBHandler {
+	if len(mh.aggregateQuery) > 0 {
+		mh.aggregateQuery = make([]interface{}, 0)
+	}
 	if len(mh.query) > 0 {
 		mh.query = make(map[string]interface{})
 	}
@@ -1392,4 +1427,12 @@ func generateRandomAddress() string {
 
 func generateRandomPhone() string {
 	return fmt.Sprintf("+1-555-%04d", rand.Intn(10000))
+}
+
+func dataToJSON(data interface{}) (string, error) {
+	jsonBytes, err := json.Marshal(data)
+	if err != nil {
+		return "", err
+	}
+	return string(jsonBytes), nil
 }

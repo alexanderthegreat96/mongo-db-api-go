@@ -14,6 +14,8 @@ func main() {
 		Table("test").
 		Where("age", "between", []interface{}{16, 18}).
 		Where("name", "ilike", "david").
+		SortBy("date", "desc").
+		GroupBy("name").
 		Find()
 
 	if err.Error != "" {
