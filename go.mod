@@ -1,8 +1,9 @@
 module github.com/alexanderthegreat96/mongo-db-api-go
 
-go 1.21.5
+go 1.22.3
 
 require (
+	github.com/alexanderthegreat96/go-ordered-map v0.0.0-20240709113045-04731c53c980
 	github.com/common-nighthawk/go-figure v0.0.0-20210622060536-734e95fb86be
 	github.com/emirpasic/gods v1.18.1
 	github.com/gin-gonic/gin v1.10.0

@@ -7,6 +7,10 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/alexanderthegreat96/go-ordered-map/omap"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 func GetEnv(key, defaultValue string) string {
@@ -192,6 +196,7 @@ func ConvertJsonToData(jsonInput string) (interface{}, error) {
 	}
 	return result, nil
 }
+
 func ConvertJsonToMap(jsonInput string) (map[string]interface{}, error) {
 	var result map[string]interface{}
 	err := json.Unmarshal([]byte(jsonInput), &result)
@@ -199,4 +204,61 @@ func ConvertJsonToMap(jsonInput string) (map[string]interface{}, error) {
 		return nil, errors.New("the input string is not a valid JSON")
 	}
 	return result, nil
+}
+
+func ConvertMapToJsonOrdered(m map[string]interface{}) (string, error) {
+
+	om := omap.NewOrderedMap()
+	for key, value := range m {
+		om.AddPair(key, value)
+	}
+
+	jsonBytes, err := om.Map.MarshalJSON()
+	if err != nil {
+		return "", fmt.Errorf("error converting ordered map to JSON: %v", err)
+	}
+
+	// Convert JSON bytes to string and return
+	return string(jsonBytes), nil
+}
+
+func AppendCreatedAtToJson(jsonStr string) bson.D {
+	// new ordered map
+	om := omap.NewOrderedMap()
+	// populate existing data from json
+	om.FromJSON(jsonStr)
+	// adding timestamps
+	om.AddPair("created_at", time.Now())
+	om.AddPair("updated_at", time.Now())
+
+	// converting back to json
+	json := om.ToJSON()
+
+	// converting to an ordered bson
+	var result bson.D
+	if err := bson.UnmarshalExtJSON([]byte(json), true, &result); err != nil {
+		return nil
+	}
+
+	return result
+}
+
+func AppendUpdatedAtToJson(jsonStr string) bson.D {
+	// new ordered map
+	om := omap.NewOrderedMap()
+	// populate existing data from json
+	om.FromJSON(jsonStr)
+	// adding timestamps
+	om.AddPair("updated_at", time.Now())
+
+	// converting back to json
+	json := om.ToJSON()
+
+	// converting to an ordered bson
+	var result bson.D
+	if err := bson.UnmarshalExtJSON([]byte(json), true, &result); err != nil {
+		return nil
+	}
+
+	return result
 }

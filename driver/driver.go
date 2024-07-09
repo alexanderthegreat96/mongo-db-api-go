@@ -514,7 +514,15 @@ func (mh *MongoDBHandler) insertChunk(ctx context.Context, chunk []map[string]in
 
 	var interfaceSlice []interface{}
 	for _, item := range chunk {
-		interfaceSlice = append(interfaceSlice, mh.appendTimestampForCreatedAt(item))
+
+		if mh.useTimestamps {
+			itemToJson, _ := helpers.ConvertMapToJsonOrdered(item)
+			itemWithTimestamps := helpers.AppendCreatedAtToJson(itemToJson)
+			interfaceSlice = append(interfaceSlice, itemWithTimestamps)
+		} else {
+			interfaceSlice = append(interfaceSlice, item)
+		}
+
 	}
 
 	_, err := mh.collection.InsertMany(ctx, interfaceSlice)
@@ -587,9 +595,20 @@ func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, Mongo
 		return mh.newMongoOperations(200, true, "insert", "All inserts performed."), MongoError{}
 
 	case map[string]interface{}:
-		_, err := mh.collection.InsertOne(ctx, mh.appendTimestampForCreatedAt(d))
-		if err != nil {
-			return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
+		if mh.useTimestamps {
+			insertDataToJson, _ := helpers.ConvertMapToJsonOrdered(d)
+			insertData := helpers.AppendCreatedAtToJson(insertDataToJson)
+
+			_, err := mh.collection.InsertOne(ctx, insertData)
+			if err != nil {
+				return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
+			}
+
+		} else {
+			_, err := mh.collection.InsertOne(ctx, d)
+			if err != nil {
+				return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
+			}
 		}
 
 	case []interface{}:
@@ -607,7 +626,13 @@ func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, Mongo
 				var interfaceSlice []interface{}
 				for _, item := range chunk {
 					if itemMap, ok := item.(map[string]interface{}); ok {
-						interfaceSlice = append(interfaceSlice, mh.appendTimestampForCreatedAt(itemMap))
+						if mh.useTimestamps {
+							toJson, _ := helpers.ConvertMapToJsonOrdered(itemMap)
+							timestampedMap := helpers.AppendCreatedAtToJson(toJson)
+							interfaceSlice = append(interfaceSlice, timestampedMap)
+						} else {
+							interfaceSlice = append(interfaceSlice, itemMap)
+						}
 					} else {
 						errCh <- mh.newMongoError(400, "unsupported data type in array")
 						return
@@ -913,7 +938,7 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 // takes a criteria
 // and a slice of data
 
-func (mh *MongoDBHandler) Update(update interface{}) (MongoOperationsResult, MongoError) {
+func (mh *MongoDBHandler) Update(data interface{}) (MongoOperationsResult, MongoError) {
 	if mh.client == nil {
 		// connection to the mongodb server
 		if err := mh.getConnection(); err.Error != "" {
@@ -921,15 +946,12 @@ func (mh *MongoDBHandler) Update(update interface{}) (MongoOperationsResult, Mon
 		}
 	}
 
+	dataMap := data.(map[string]interface{})
+
+	update := bson.M{"$set": data}
 	if mh.useTimestamps {
-		switch d := update.(type) {
-		case []map[string]interface{}:
-			for i := range d {
-				d[i] = mh.appendTimestamps(d[i]).(map[string]interface{})
-			}
-		case map[string]interface{}:
-			update = mh.appendTimestamps(d).(map[string]interface{})
-		}
+		toJsonString, _ := helpers.ConvertMapToJsonOrdered(dataMap)
+		update = bson.M{"$set": helpers.AppendUpdatedAtToJson(toJsonString)}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -940,7 +962,7 @@ func (mh *MongoDBHandler) Update(update interface{}) (MongoOperationsResult, Mon
 		Strength: 2, // Case-insensitive
 	})
 
-	_, err := mh.collection.UpdateMany(ctx, mh.query, bson.M{"$set": update}, opts)
+	_, err := mh.collection.UpdateMany(ctx, mh.query, update, opts)
 	if err != nil {
 		return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 	}
@@ -969,29 +991,23 @@ func (mh *MongoDBHandler) UpdateByID(recordId string, data interface{}) (MongoOp
 		}
 	}
 
+	dataMap := data.(map[string]interface{})
+	update := bson.M{"$set": dataMap}
 	if mh.useTimestamps {
-		switch d := data.(type) {
-		case []map[string]interface{}:
-			for i := range d {
-				d[i] = mh.appendTimestamps(d[i]).(map[string]interface{})
-			}
-		case map[string]interface{}:
-			data = mh.appendTimestamps(d).(map[string]interface{})
-		}
+		toJsonString, _ := helpers.ConvertMapToJsonOrdered(dataMap)
+		update = bson.M{"$set": helpers.AppendUpdatedAtToJson(toJsonString)}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	var filter bson.M
-
 	findRecord, findRecordErr := mh.FindById(recordId)
 
 	if findRecordErr.Error != "" {
 		return MongoOperationsResult{}, findRecordErr
 	}
 
-	update := bson.M{"$set": data}
 	if findRecord.IdType == "mongo" {
 		objID, err := primitive.ObjectIDFromHex(recordId)
 		if err != nil {
@@ -1138,14 +1154,14 @@ func (mh *MongoDBHandler) Delete() (MongoOperationsResult, MongoError) {
 // map the operators with the value
 func mapOperators(operator string, value interface{}) (interface{}, error) {
 	operatorMap := map[string]interface{}{
-		"=":             map[string]interface{}{"$eq": value, "$options": "i"},
+		"=":             map[string]interface{}{"$eq": value},
 		"!=":            map[string]interface{}{"$ne": value},
 		"<>":            map[string]interface{}{"$ne": value},
 		"<":             map[string]interface{}{"$lt": value},
 		"<=":            map[string]interface{}{"$lte": value},
 		">":             map[string]interface{}{"$gt": value},
 		">=":            map[string]interface{}{"$gte": value},
-		"like":          map[string]interface{}{"$regex": value},
+		"like":          map[string]interface{}{"$regex": value, "$options": "i"},
 		"not_like":      map[string]interface{}{"$not": map[string]interface{}{"$regex": value}},
 		"ilike":         map[string]interface{}{"$regex": value, "$options": "i"}, // case insensitive like
 		"&":             map[string]interface{}{"$bitsAllSet": value},
@@ -1155,7 +1171,7 @@ func mapOperators(operator string, value interface{}) (interface{}, error) {
 		">>":            map[string]interface{}{"$bitsAnyClear": value},
 		"rlike":         map[string]interface{}{"$regex": value},
 		"regexp":        map[string]interface{}{"$regex": value},
-		"not_regexp":    map[string]interface{}{"$not": map[string]interface{}{"$regex": value}},
+		"not_regexp":    map[string]interface{}{"$not": map[string]interface{}{"$regex": value}, "$options": "i"},
 		"exists":        map[string]interface{}{"$exists": value},
 		"type":          map[string]interface{}{"$type": value},
 		"mod":           map[string]interface{}{"$mod": value},
@@ -1163,7 +1179,7 @@ func mapOperators(operator string, value interface{}) (interface{}, error) {
 		"all":           map[string]interface{}{"$all": value},
 		"size":          map[string]interface{}{"$size": value},
 		"regex":         map[string]interface{}{"$regex": value},
-		"not_regex":     map[string]interface{}{"$not": map[string]interface{}{"$regex": value}},
+		"not_regex":     map[string]interface{}{"$not": map[string]interface{}{"$regex": value}, "$options": "i"},
 		"text":          map[string]interface{}{"$text": value},
 		"slice":         map[string]interface{}{"$slice": value},
 		"elemmatch":     map[string]interface{}{"$elemMatch": value},

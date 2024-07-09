@@ -24,3 +24,5 @@ main
 
 # Environment files
 .env
+
+testing/
