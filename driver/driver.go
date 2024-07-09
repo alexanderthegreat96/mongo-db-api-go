@@ -13,40 +13,34 @@ import (
 	"time"
 
 	"github.com/alexanderthegreat96/mongo-db-api-go/helpers"
+	"github.com/emirpasic/gods/maps/linkedhashmap"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.mongodb.org/mongo-driver/mongo/options"
 )
 
-var canConnect bool
-
-type AggregationStage struct {
-	StageName string
-	Params    interface{}
-}
 type MongoDBHandler struct {
-	debug               bool
-	limit               int
-	perPage             int
-	page                int
-	sort                []primitive.E
-	query               map[string]interface{}
-	aggregateQuery      []interface{}
-	aggregationPipeline []AggregationStage
-	multipleWheres      bool
-	host                string
-	port                string
-	dbName              string
-	tableName           string
-	username            string
-	password            string
-	useTimestamps       bool
-	timeNow             time.Time
-	client              *mongo.Client
-	db                  *mongo.Database
-	collection          *mongo.Collection
-	logger              *log.Logger
+	debug          bool
+	limit          int
+	perPage        int
+	page           int
+	sort           []primitive.E
+	query          map[string]interface{}
+	aggregateQuery []interface{}
+	multipleWheres bool
+	host           string
+	port           string
+	dbName         string
+	tableName      string
+	username       string
+	password       string
+	useTimestamps  bool
+	timeNow        time.Time
+	client         *mongo.Client
+	db             *mongo.Database
+	collection     *mongo.Collection
+	logger         *log.Logger
 }
 
 // used for results mapping
@@ -117,8 +111,6 @@ type SingleMongoResult struct {
 // similar to how constructors work
 func MongoDB() *MongoDBHandler {
 	logger := log.New(os.Stdout, "[MONGO-DB-DRIVER]: ", log.Ldate|log.Ltime)
-
-	canConnect = true
 	host := helpers.GetEnv("MONGO_DB_HOST", "localhost")
 	port := helpers.GetEnv("MONGO_DB_PORT", "27017")
 	dbName := helpers.GetEnv("MONGO_DB_NAME", "test")
@@ -412,6 +404,14 @@ func (mh *MongoDBHandler) Limit(limit int) *MongoDBHandler {
 	return mh
 }
 
+func toJsonBytes(data interface{}) (string, error) {
+	jsonData, err := json.Marshal(data)
+	if err != nil {
+		return "", err
+	}
+	return string(jsonData), nil
+}
+
 // just adds created_at and updated_at timestamps
 // upon insertion and or update
 func (mh *MongoDBHandler) appendTimestamps(data interface{}) interface{} {
@@ -419,44 +419,48 @@ func (mh *MongoDBHandler) appendTimestamps(data interface{}) interface{} {
 		return data
 	}
 
+	// use hashman to preserve inserion order
+	// handle as json first
+
 	switch d := data.(type) {
 	case []interface{}:
-		for _, item := range d {
+		for i, item := range d {
 			if itemMap, ok := item.(map[string]interface{}); ok {
-				if itemMap == nil {
-					itemMap = make(map[string]interface{})
-				}
 				if _, exists := itemMap["created_at"]; !exists {
 					itemMap["created_at"] = mh.timeNow
 				}
 				if _, exists := itemMap["updated_at"]; !exists {
 					itemMap["updated_at"] = mh.timeNow
 				}
+				// Assign back to the slice
+				d[i] = itemMap
 			}
 		}
 	case []map[string]interface{}:
 		for i, itemMap := range d {
-			if itemMap == nil {
-				itemMap = make(map[string]interface{})
-				d[i] = itemMap
-			}
 			if _, exists := itemMap["created_at"]; !exists {
 				itemMap["created_at"] = mh.timeNow
 			}
 			if _, exists := itemMap["updated_at"]; !exists {
 				itemMap["updated_at"] = mh.timeNow
 			}
+			// Assign back to the slice
+			d[i] = itemMap
 		}
 	case map[string]interface{}:
-		if d == nil {
-			d = make(map[string]interface{})
-		}
-		if _, exists := d["created_at"]; !exists {
-			d["created_at"] = mh.timeNow
-		}
-		if _, exists := d["updated_at"]; !exists {
-			d["updated_at"] = mh.timeNow
-		}
+		// if _, exists := d["created_at"]; !exists {
+		// 	d["created_at"] = mh.timeNow
+		// }
+		// if _, exists := d["updated_at"]; !exists {
+		// 	d["updated_at"] = mh.timeNow
+		// }
+		jsonBytes, _ := toJsonBytes(data)
+		hm := linkedhashmap.New()
+		hm.FromJSON([]byte(jsonBytes))
+		hm.Put("created_at", mh.timeNow)
+		hm.Put("updated_at", mh.timeNow)
+		hm.ToJSON()
+
 	}
 
 	return data
@@ -476,12 +480,41 @@ func chunkSlice(slice []map[string]interface{}, chunkSize int) [][]map[string]in
 	return chunks
 }
 
+// chuunks interface slices
+func chunkInterfaceSlice(slice []interface{}, chunkSize int) [][]interface{} {
+	var chunks [][]interface{}
+	for i := 0; i < len(slice); i += chunkSize {
+		end := i + chunkSize
+		if end > len(slice) {
+			end = len(slice)
+		}
+		chunks = append(chunks, slice[i:end])
+	}
+	return chunks
+}
+
+func (mh *MongoDBHandler) appendTimestampForCreatedAt(data map[string]interface{}) map[string]interface{} {
+	result := data
+	if mh.useTimestamps {
+		fmt.Println("goes here")
+		jsonBytes, _ := toJsonBytes(data)
+		hm := linkedhashmap.New()
+		hm.FromJSON([]byte(jsonBytes))
+		hm.Put("created_at", mh.timeNow)
+		hm.Put("updated_at", mh.timeNow)
+		reEncodedBytes, _ := hm.ToJSON()
+		result, _ = helpers.ConvertJsonToMap(string(reEncodedBytes))
+	}
+
+	return result
+}
+
 func (mh *MongoDBHandler) insertChunk(ctx context.Context, chunk []map[string]interface{}, wg *sync.WaitGroup, resultCh chan<- MongoOperationsResult, errCh chan<- MongoError) {
 	defer wg.Done()
 
 	var interfaceSlice []interface{}
 	for _, item := range chunk {
-		interfaceSlice = append(interfaceSlice, item)
+		interfaceSlice = append(interfaceSlice, mh.appendTimestampForCreatedAt(item))
 	}
 
 	_, err := mh.collection.InsertMany(ctx, interfaceSlice)
@@ -496,6 +529,8 @@ func (mh *MongoDBHandler) insertChunk(ctx context.Context, chunk []map[string]in
 // split the batch into a number that is percentage based
 func calculateBatchSize(totalRecords int, percentage float64) int {
 	batchSize := int(float64(totalRecords) * percentage / 100.0)
+
+	fmt.Println(batchSize)
 	return batchSize
 
 }
@@ -520,20 +555,16 @@ func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, Mongo
 		return MongoOperationsResult{}, err
 	}
 
-	totalRecords := countRecords(data)
-
-	// // add timestamps if they are enabled
-	if mh.useTimestamps {
-		data = mh.appendTimestamps(data)
-	}
-
+	// totalRecords := countRecords(data)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	switch d := data.(type) {
 	case []map[string]interface{}:
-		splitThisIn := calculateBatchSize(totalRecords, 30.0) // batch size based on 30% of the record count
-		chunks := chunkSlice(d, splitThisIn)                  // will split this in whatever value our function returns
+		// fmt.Println("goes in here")
+		// fmt.Println(totalRecords)
+		// splitThisIn := calculateBatchSize(totalRecords, 10.0) // batch size based on 30% of the record count
+		chunks := chunkSlice(d, 300) // will split this in whatever value our function returns
 		var wg sync.WaitGroup
 		resultCh := make(chan MongoOperationsResult, len(chunks))
 		errCh := make(chan MongoError, len(chunks))
@@ -556,24 +587,53 @@ func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, Mongo
 		return mh.newMongoOperations(200, true, "insert", "All inserts performed."), MongoError{}
 
 	case map[string]interface{}:
-		_, err := mh.collection.InsertOne(ctx, d)
+		_, err := mh.collection.InsertOne(ctx, mh.appendTimestampForCreatedAt(d))
 		if err != nil {
 			return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 		}
 
 	case []interface{}:
-		var interfaceSlice []interface{}
-		for _, item := range d {
-			if itemMap, ok := item.(map[string]interface{}); ok {
-				interfaceSlice = append(interfaceSlice, itemMap)
-			} else {
-				return MongoOperationsResult{}, mh.newMongoError(400, "unsupported data type in array")
+		// splitThisIn := calculateBatchSize(totalRecords, 30.0) // batch size based on 30% of the record count
+		chunks := chunkInterfaceSlice(d, 300) // split data into chunks of []interface{}
+
+		var wg sync.WaitGroup
+		resultCh := make(chan MongoOperationsResult, len(d))
+		errCh := make(chan MongoError, len(d))
+
+		for _, chunk := range chunks {
+			wg.Add(1)
+			go func(chunk []interface{}) {
+				defer wg.Done()
+				var interfaceSlice []interface{}
+				for _, item := range chunk {
+					if itemMap, ok := item.(map[string]interface{}); ok {
+						interfaceSlice = append(interfaceSlice, mh.appendTimestampForCreatedAt(itemMap))
+					} else {
+						errCh <- mh.newMongoError(400, "unsupported data type in array")
+						return
+					}
+				}
+
+				_, err := mh.collection.InsertMany(ctx, interfaceSlice)
+				if err != nil {
+					errCh <- mh.newMongoError(500, err.Error())
+				} else {
+					resultCh <- mh.newMongoOperations(200, true, "insert", "Insert performed.")
+				}
+			}(chunk)
+		}
+
+		wg.Wait()
+		close(resultCh)
+		close(errCh)
+
+		for err := range errCh {
+			if err.Error != "" {
+				return MongoOperationsResult{}, err
 			}
 		}
-		_, err := mh.collection.InsertMany(ctx, interfaceSlice)
-		if err != nil {
-			return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
-		}
+
+		return mh.newMongoOperations(200, true, "insert", "All inserts performed."), MongoError{}
 
 	default:
 		return MongoOperationsResult{}, mh.newMongoError(400, "unsupported data type")
@@ -1169,92 +1229,6 @@ func (mh *MongoDBHandler) Query() (string, error) {
 
 	}
 	return "", errors.New("no query provided")
-}
-
-func (mh *MongoDBHandler) First() {
-
-}
-
-// not finished yet
-func (mh *MongoDBHandler) Aggregate() (MongoResults, MongoError) {
-	if mh.client == nil {
-		if err := mh.getConnection(); err.Error != "" {
-			return MongoResults{}, err
-		}
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	opts := options.Aggregate()
-	var pipeline []interface{}
-	for _, stage := range mh.aggregationPipeline {
-		pipeline = append(pipeline, bson.D{{Key: stage.StageName, Value: stage.Params}})
-	}
-
-	cur, err := mh.collection.Aggregate(ctx, pipeline, opts)
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return MongoResults{}, mh.newMongoError(404, "No results found")
-		}
-		return MongoResults{}, mh.newMongoError(500, err.Error())
-	}
-	defer cur.Close(ctx)
-
-	var results []map[string]interface{}
-
-	for cur.Next(ctx) {
-		var result map[string]interface{}
-		if err := cur.Decode(&result); err != nil {
-			return MongoResults{}, mh.newMongoError(500, err.Error())
-		}
-		results = append(results, result)
-	}
-
-	if err := cur.Err(); err != nil {
-		return MongoResults{}, mh.newMongoError(500, err.Error())
-	}
-
-	totalCount, err := mh.TotalCount()
-	if err != nil {
-		return MongoResults{}, mh.newMongoError(500, err.Error())
-	}
-
-	if len(results) == 0 {
-		return MongoResults{}, mh.newMongoError(404, "No results found.")
-	}
-
-	totalPages := (int(totalCount) + mh.perPage - 1) / mh.perPage
-	currentPage := mh.page
-	nextPage := currentPage + 1
-	if nextPage > totalPages {
-		nextPage = 0
-	}
-
-	return MongoResults{
-		Status:   true,
-		Code:     200,
-		Database: mh.dbName,
-		Table:    mh.tableName,
-		Count:    totalCount,
-		Results:  results,
-		Pagination: MongoResultPagination{
-			TotalPages:  totalPages,
-			CurrentPage: currentPage,
-			NextPage:    nextPage,
-			LastPage:    totalPages,
-			PerPage:     mh.perPage,
-		},
-	}, MongoError{}
-}
-
-func (mh *MongoDBHandler) AddAggregationStage(stage AggregationStage) *MongoDBHandler {
-	mh.aggregationPipeline = append(mh.aggregationPipeline, stage)
-	return mh
-}
-func (mh *MongoDBHandler) ClearAggregationPipeline() *MongoDBHandler {
-	mh.aggregationPipeline = nil
-	return mh
 }
 
 func (mh *MongoDBHandler) ListDatabases() (MongoDatabaseListResult, MongoError) {

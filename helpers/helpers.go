@@ -192,3 +192,11 @@ func ConvertJsonToData(jsonInput string) (interface{}, error) {
 	}
 	return result, nil
 }
+func ConvertJsonToMap(jsonInput string) (map[string]interface{}, error) {
+	var result map[string]interface{}
+	err := json.Unmarshal([]byte(jsonInput), &result)
+	if err != nil {
+		return nil, errors.New("the input string is not a valid JSON")
+	}
+	return result, nil
+}
