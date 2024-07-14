@@ -14,7 +14,7 @@ import (
 
 func RunApi(mongoDb driver.MongoDBHandler, apiHost string, apiPort string) {
 	// remove when NOT compiling
-	// gin.SetMode(gin.ReleaseMode)
+	gin.SetMode(gin.ReleaseMode)
 	// @BasePath /
 	mongoApi := gin.Default()
 

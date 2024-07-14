@@ -33,10 +33,17 @@ There are 2 clients available:
 2. Install / Run / Build
 
     ```bash
+    ## Deploy and Test
     go mod tidy
     go run main.go
-    go build main.go
     ```
+
+    ```bash
+    # building
+    # before building, uncomment gin.SetMode(gin.ReleaseMode) from api/api.go
+    GOOS=darwin GOARCH=amd64 go build -o bin/mac/mongo-api # MacOS
+    GOOS=linux GOARCH=amd64 go build -o bin/linux/mongo-api # linux
+    GOOS=windows GOARCH=amd64 go build -o bin/windows/mongo-api.exe # Windows
 
 3. Create a `.env` file in the root directory of your project and configure it as shown in the Environment Variables section.
 
