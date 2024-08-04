@@ -166,8 +166,16 @@ func ParseSort(queryString string) [][]interface{} {
 			items := strings.Split(queryString, "|")
 			if len(items) > 0 {
 				for _, item := range items {
+					// support for [field_name: desc]
 					if strings.Contains(item, ":") {
 						parts := strings.Split(item, ":")
+						if len(parts) == 2 {
+							parsed = append(parsed, []interface{}{parts[0], parts[1]})
+						}
+					}
+					// support for [field_name, desc]
+					if strings.Contains(item, ",") {
+						parts := strings.Split(item, ",")
 						if len(parts) == 2 {
 							parsed = append(parsed, []interface{}{parts[0], parts[1]})
 						}
@@ -175,8 +183,17 @@ func ParseSort(queryString string) [][]interface{} {
 				}
 			}
 		} else {
+			// support for [field_name: desc]
 			if strings.Contains(queryString, ":") {
 				parts := strings.Split(queryString, ":")
+				if len(parts) == 2 {
+					parsed = append(parsed, []interface{}{parts[0], parts[1]})
+				}
+			}
+
+			// support for [field_name, desc]
+			if strings.Contains(queryString, ",") {
+				parts := strings.Split(queryString, ",")
 				if len(parts) == 2 {
 					parsed = append(parsed, []interface{}{parts[0], parts[1]})
 				}

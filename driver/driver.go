@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -314,7 +315,7 @@ func (mh *MongoDBHandler) SortBy(field, order string) *MongoDBHandler {
 	}
 
 	var sortOrder int32
-	if order == "ASC" {
+	if strings.ToLower(order) == "asc" {
 		sortOrder = 1
 	} else {
 		sortOrder = -1
@@ -414,53 +415,36 @@ func toJsonBytes(data interface{}) (string, error) {
 
 // just adds created_at and updated_at timestamps
 // upon insertion and or update
-func (mh *MongoDBHandler) appendTimestamps(data interface{}) interface{} {
+func (mh *MongoDBHandler) appendTimestamps(data interface{}, operation string) interface{} {
 	if !mh.useTimestamps {
 		return data
 	}
-
-	// use hashman to preserve inserion order
-	// handle as json first
+	addOrUpdateTimestamps := func(itemMap map[string]interface{}) {
+		if operation == "insert" {
+			if _, exists := itemMap["created_at"]; !exists {
+				itemMap["created_at"] = mh.timeNow
+			}
+		}
+		if operation == "insert" || operation == "update" {
+			itemMap["updated_at"] = mh.timeNow
+		}
+	}
 
 	switch d := data.(type) {
 	case []interface{}:
 		for i, item := range d {
 			if itemMap, ok := item.(map[string]interface{}); ok {
-				if _, exists := itemMap["created_at"]; !exists {
-					itemMap["created_at"] = mh.timeNow
-				}
-				if _, exists := itemMap["updated_at"]; !exists {
-					itemMap["updated_at"] = mh.timeNow
-				}
-				// Assign back to the slice
+				addOrUpdateTimestamps(itemMap)
 				d[i] = itemMap
 			}
 		}
 	case []map[string]interface{}:
 		for i, itemMap := range d {
-			if _, exists := itemMap["created_at"]; !exists {
-				itemMap["created_at"] = mh.timeNow
-			}
-			if _, exists := itemMap["updated_at"]; !exists {
-				itemMap["updated_at"] = mh.timeNow
-			}
-			// Assign back to the slice
+			addOrUpdateTimestamps(itemMap)
 			d[i] = itemMap
 		}
 	case map[string]interface{}:
-		// if _, exists := d["created_at"]; !exists {
-		// 	d["created_at"] = mh.timeNow
-		// }
-		// if _, exists := d["updated_at"]; !exists {
-		// 	d["updated_at"] = mh.timeNow
-		// }
-		jsonBytes, _ := toJsonBytes(data)
-		hm := linkedhashmap.New()
-		hm.FromJSON([]byte(jsonBytes))
-		hm.Put("created_at", mh.timeNow)
-		hm.Put("updated_at", mh.timeNow)
-		hm.ToJSON()
-
+		addOrUpdateTimestamps(d)
 	}
 
 	return data
@@ -514,15 +498,12 @@ func (mh *MongoDBHandler) insertChunk(ctx context.Context, chunk []map[string]in
 
 	var interfaceSlice []interface{}
 	for _, item := range chunk {
-
 		if mh.useTimestamps {
-			itemToJson, _ := helpers.ConvertMapToJsonOrdered(item)
-			itemWithTimestamps := helpers.AppendCreatedAtToJson(itemToJson)
-			interfaceSlice = append(interfaceSlice, itemWithTimestamps)
-		} else {
-			interfaceSlice = append(interfaceSlice, item)
+			if updatedMap, ok := mh.appendTimestamps(item, "insert").(map[string]interface{}); ok {
+				item = updatedMap
+			}
 		}
-
+		interfaceSlice = append(interfaceSlice, item)
 	}
 
 	_, err := mh.collection.InsertMany(ctx, interfaceSlice)
@@ -569,10 +550,7 @@ func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, Mongo
 
 	switch d := data.(type) {
 	case []map[string]interface{}:
-		// fmt.Println("goes in here")
-		// fmt.Println(totalRecords)
-		// splitThisIn := calculateBatchSize(totalRecords, 10.0) // batch size based on 30% of the record count
-		chunks := chunkSlice(d, 300) // will split this in whatever value our function returns
+		chunks := chunkSlice(d, 300) // will split into 300 per chunk
 		var wg sync.WaitGroup
 		resultCh := make(chan MongoOperationsResult, len(chunks))
 		errCh := make(chan MongoError, len(chunks))
@@ -596,19 +574,13 @@ func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, Mongo
 
 	case map[string]interface{}:
 		if mh.useTimestamps {
-			insertDataToJson, _ := helpers.ConvertMapToJsonOrdered(d)
-			insertData := helpers.AppendCreatedAtToJson(insertDataToJson)
-
-			_, err := mh.collection.InsertOne(ctx, insertData)
-			if err != nil {
-				return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
+			if updatedMap, ok := mh.appendTimestamps(d, "insert").(map[string]interface{}); ok {
+				d = updatedMap
 			}
-
-		} else {
-			_, err := mh.collection.InsertOne(ctx, d)
-			if err != nil {
-				return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
-			}
+		}
+		_, err := mh.collection.InsertOne(ctx, d)
+		if err != nil {
+			return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 		}
 
 	case []interface{}:
@@ -627,12 +599,14 @@ func (mh *MongoDBHandler) Insert(data interface{}) (MongoOperationsResult, Mongo
 				for _, item := range chunk {
 					if itemMap, ok := item.(map[string]interface{}); ok {
 						if mh.useTimestamps {
-							toJson, _ := helpers.ConvertMapToJsonOrdered(itemMap)
-							timestampedMap := helpers.AppendCreatedAtToJson(toJson)
-							interfaceSlice = append(interfaceSlice, timestampedMap)
-						} else {
-							interfaceSlice = append(interfaceSlice, itemMap)
+							if updatedMap, ok := mh.appendTimestamps(itemMap, "insert").(map[string]interface{}); ok {
+								itemMap = updatedMap
+							} else {
+								errCh <- mh.newMongoError(400, "failed to assert map after appending timestamps")
+								return
+							}
 						}
+						interfaceSlice = append(interfaceSlice, itemMap)
 					} else {
 						errCh <- mh.newMongoError(400, "unsupported data type in array")
 						return
@@ -842,6 +816,7 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 	if len(mh.sort) > 0 {
 		opts.SetSort(mh.sort)
 	}
+
 	opts.SetLimit(int64(mh.perPage))
 	opts.SetSkip(int64((mh.page - 1) * mh.perPage))
 
@@ -946,20 +921,18 @@ func (mh *MongoDBHandler) Update(data interface{}) (MongoOperationsResult, Mongo
 		}
 	}
 
-	dataMap := data.(map[string]interface{})
+	if mh.useTimestamps {
+		data = mh.appendTimestamps(data, "update")
+	}
 
 	update := bson.M{"$set": data}
-	if mh.useTimestamps {
-		toJsonString, _ := helpers.ConvertMapToJsonOrdered(dataMap)
-		update = bson.M{"$set": helpers.AppendUpdatedAtToJson(toJsonString)}
-	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	opts := options.Update().SetCollation(&options.Collation{
 		Locale:   "en",
-		Strength: 2, // Case-insensitive
+		Strength: 2,
 	})
 
 	_, err := mh.collection.UpdateMany(ctx, mh.query, update, opts)

@@ -1,17 +1,35 @@
-version: "3.8"
 services:
-  mongodb_container:
+  mongo-db-api-container:
     image: mongo:latest
-    container_name: mongodb_container
+    container_name: mongo-db-api-container
     ports:
       - '${MONGO_CONTAINER_EXTERNAL_PORT:-27018}:27017'
     environment:
       MONGO_INITDB_ROOT_USERNAME: admin
       MONGO_INITDB_ROOT_PASSWORD: admin
     volumes:
-      - ./mongo-data:/data/db
+      #- ./databases/mongo:/data/db
+      - mongo-db-data:/data/db
     networks:
-      - local
+      - mongo-api-network
+
+  mongo-api-container:
+    image: mongodb-api
+    container_name: mongo-api-container
+    build:
+      context: .
+      dockerfile: ./Dockerfile
+    ports:
+      - "${MONGO_API_EXTERNAL_PORT:-9874}:9777"
+    environment:
+      - ENV_VAR=production
+    networks:
+      - mongo-api-network
+    depends_on:
+      - mongo-db-api-container
+
 networks:
-  local:
+  mongo-api-network:
     driver: bridge
+volumes:
+  mongo-db-data:
