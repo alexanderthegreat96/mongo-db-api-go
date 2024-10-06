@@ -25,7 +25,7 @@ const retryInterval = 5 * time.Second
 func init() {
 	logger = log.New(os.Stdout, "[MONGO-API]: ", log.Ldate|log.Ltime)
 
-	versionNumber := "v1.3"
+	versionNumber := "v1.0.4"
 	mongoApiBanner := figure.NewColorFigure("MongoAPI "+versionNumber, "", "blue", false)
 	mongoApiBanner.Print()
 
