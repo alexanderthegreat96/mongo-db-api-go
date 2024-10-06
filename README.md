@@ -45,6 +45,11 @@ There are 2 clients available:
     GOOS=linux GOARCH=amd64 go build -o bin/linux/mongo-api # linux
     GOOS=windows GOARCH=amd64 go build -o bin/windows/mongo-api.exe # Windows
 
+    # you may also cross-compile using the `build.sh` file
+    # all the binaries can be found in the /bin directory
+    chmod a+x build.sh
+    ./build.sh
+
 3. Create a `.env` file in the root directory of your project and configure it as shown in the Environment Variables section.
 
 4. Run the application:
@@ -58,14 +63,32 @@ There are 2 clients available:
 Create a `.env` file in the root directory of your project with the following variables:
 
 ```env
-MONGO_DB_HOST=<your-mongo-db-host>
-MONGO_DB_PORT=<your-mongo-db-port>
-MONGO_DB_USERNAME=<your-mongo-db-username>
-MONGO_DB_PASSWORD=<your-mongo-db-password>
-MONGO_DB_NAME=<your-mongo-db-default-database>
-MONGO_DB_TABLE=<your-mongo-db-default-table>
-API_PORT=<api-port>
-API_HOST=<api-host>
+# API Data
+API_PORT=9777
+API_HOST=0.0.0.0
+
+# MongoDB Handler
+HANDLER_USE_TIMESTAMPS=true
+HANDLER_DEBUG=true
+
+# MongoDB Connection
+MONGO_DB_HOST=mongo-db-api-container
+MONGO_DB_PORT=27017
+MONGO_DB_NAME=test
+MONGO_DB_TABLE=test
+MONGO_DB_USERNAME=admin
+MONGO_DB_PASSWORD=admin
+
+# EXTERNAL DATA
+MONGO_CONTAINER_EXTERNAL_PORT=27654
+MONGO_API_EXTERNAL_PORT=9874
+
+# Authorization
+# leave this empty if you don't
+# want to use authentication
+# otherwise, you have to provide the "api_key" : "123123124ff" 
+# in the headers
+API_KEY=
 ```
 
 ## API Endpoints

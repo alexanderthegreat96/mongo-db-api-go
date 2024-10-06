@@ -12,12 +12,36 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func RunApi(mongoDb driver.MongoDBHandler, apiHost string, apiPort string) {
+func apiKeyMiddleware(apiKey string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if apiKey == "" {
+			c.Next()
+			return
+		}
+
+		reqApiKey := c.GetHeader("api_key")
+
+		if reqApiKey == "" {
+			c.JSON(401, gin.H{"status": false, "error": "API key is missing from headers"})
+			c.Abort()
+			return
+		}
+
+		if reqApiKey != apiKey {
+			c.JSON(401, gin.H{"status": false, "error": "Invalid API key"})
+			c.Abort()
+			return
+		}
+
+		c.Next()
+	}
+}
+func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPort string) {
 	// remove when NOT compiling
 	gin.SetMode(gin.ReleaseMode)
 	// @BasePath /
 	mongoApi := gin.Default()
-
+	mongoApi.Use(apiKeyMiddleware(apiKey))
 	// list all databses on the server
 	mongoApi.GET("/db/databases", func(c *gin.Context) {
 		databases, databasesErr := mongoDb.ListDatabases()

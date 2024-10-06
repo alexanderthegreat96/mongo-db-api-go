@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"time"
 
 	"github.com/alexanderthegreat96/mongo-db-api-go/api"
 	"github.com/alexanderthegreat96/mongo-db-api-go/driver"
@@ -11,16 +12,20 @@ import (
 	"github.com/joho/godotenv"
 )
 
+var apiKey string
 var apiPort string
 var apiHost string
 var canBoot bool
 var logger *log.Logger
 var mongoDb *driver.MongoDBHandler
 
+const maxRetries = 5
+const retryInterval = 5 * time.Second
+
 func init() {
 	logger = log.New(os.Stdout, "[MONGO-API]: ", log.Ldate|log.Ltime)
 
-	versionNumber := "v1.0"
+	versionNumber := "v1.3"
 	mongoApiBanner := figure.NewColorFigure("MongoAPI "+versionNumber, "", "blue", false)
 	mongoApiBanner.Print()
 
@@ -40,17 +45,30 @@ func init() {
 	logger.Printf("MongoDB Default Database: %s", helpers.GetEnv("MONGO_DB_NAME", "Missing: MONGO_DB_NAME"))
 	logger.Printf("MongoDB Default Table: %s", helpers.GetEnv("MONGO_DB_TABLE", "Missing: MONGO_DB_TABLE"))
 
-	canConnect := driver.MongoDB().CanConnectToMongo()
-
-	if !canConnect {
+	if !waitForMongoConnection() {
 		canBoot = false
-		logger.Println("Unable to connect to the MongoDB server. Please check your settings.")
+		logger.Println("Unable to connect to the MongoDB server after multiple attempts. Exiting.")
 		return
 	}
 
+	apiKey = helpers.GetEnv("API_KEY", "")
 	apiPort = helpers.GetEnv("API_PORT", "9776")
 	apiHost = helpers.GetEnv("API_HOST", "localhost")
 	mongoDb = driver.MongoDB()
+}
+
+func waitForMongoConnection() bool {
+	for i := 1; i <= maxRetries; i++ {
+		if driver.MongoDB().CanConnectToMongo() {
+			logger.Println("Successfully connected to the MongoDB server.")
+			return true
+		}
+
+		logger.Printf("Attempt %d/%d: Unable to connect to the MongoDB server. Retrying in %v...\n", i, maxRetries, retryInterval)
+		time.Sleep(retryInterval)
+	}
+
+	return false
 }
 
 func main() {
@@ -62,6 +80,5 @@ func main() {
 	logger.Println("API Information:")
 	logger.Println("You may start sending requests to: http://" + apiHost + ":" + apiPort)
 
-	// boot the actual API
-	api.RunApi(*mongoDb, apiHost, apiPort)
+	api.RunApi(*mongoDb, apiKey, apiHost, apiPort)
 }

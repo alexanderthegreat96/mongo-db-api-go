@@ -11,6 +11,7 @@ _vendor/
 .idea/
 .DS_Store
 mongo-data/
+bin/
 
 # Binary
 main
