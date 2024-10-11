@@ -16,6 +16,7 @@ PLATFORMS=(
     "openbsd/386"    # OpenBSD 32-bit
 )
 OUTPUT_DIR="./bin"
+TIMESTAMP=$(date +"%Y-%m-%d_%H-%M-%S")
 
 mkdir -p $OUTPUT_DIR
 
@@ -23,7 +24,7 @@ for PLATFORM in "${PLATFORMS[@]}"
 do
   OS=$(echo $PLATFORM | cut -d'/' -f1)
   ARCH=$(echo $PLATFORM | cut -d'/' -f2)
-  OUTPUT_NAME=$OUTPUT_DIR/$PLATFORM/mongo-db-api-$OS-$ARCH
+  OUTPUT_NAME=$OUTPUT_DIR/mongo-db-api-$OS-$ARCH-$TIMESTAMP
 
   if [ $OS = "windows" ]; then
     OUTPUT_NAME+='.exe'

@@ -3,6 +3,7 @@ package main
 import (
 	"log"
 	"os"
+	"strconv"
 	"time"
 
 	"github.com/alexanderthegreat96/mongo-db-api-go/api"
@@ -16,6 +17,7 @@ var apiKey string
 var apiPort string
 var apiHost string
 var canBoot bool
+var shoudlWaitForMongoOnBoot bool
 var logger *log.Logger
 var mongoDb *driver.MongoDBHandler
 
@@ -45,10 +47,13 @@ func init() {
 	logger.Printf("MongoDB Default Database: %s", helpers.GetEnv("MONGO_DB_NAME", "Missing: MONGO_DB_NAME"))
 	logger.Printf("MongoDB Default Table: %s", helpers.GetEnv("MONGO_DB_TABLE", "Missing: MONGO_DB_TABLE"))
 
-	if !waitForMongoConnection() {
-		canBoot = false
-		logger.Println("Unable to connect to the MongoDB server after multiple attempts. Exiting.")
-		return
+	shoudlWaitForMongoOnBoot, _ = strconv.ParseBool(helpers.GetEnv("WAIT_FOR_MONGO_ON_BOOT", "false"))
+	if shoudlWaitForMongoOnBoot {
+		if !waitForMongoConnection() {
+			canBoot = false
+			logger.Println("Unable to connect to the MongoDB server after multiple attempts. Exiting.")
+			return
+		}
 	}
 
 	apiKey = helpers.GetEnv("API_KEY", "")
