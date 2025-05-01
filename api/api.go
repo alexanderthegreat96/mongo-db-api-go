@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log"
 	"net/http"
 	"strconv"
@@ -636,5 +637,5 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 
 	})
 
-	mongoApi.Run(apiHost + ":" + apiPort)
+	mongoApi.Run(fmt.Sprintf("%s:%s", apiHost, apiPort))
 }

@@ -469,7 +469,7 @@ GET /db/:db_name/:table_name/get/:mongo_id
   - `page`: page number (optional)
   - `per_page`: per_page (optional)
   - `use_pipeline`: true / false (optional) - set to true if you run an aggregate query
-- **Payload: ***
+- **Form Params:**
   - payload: ex: { "stats.timePlayed": { "$gte":  10000 } }
 - **Success Response:**
   - Code: 200
