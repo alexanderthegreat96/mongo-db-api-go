@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -638,17 +639,21 @@ func (mh *MongoDBHandler) GroupAll(groupInput string) *MongoDBHandler {
 }
 
 // ExecuteRaw runs either a simple Find or an Aggregate using raw JSON.
+// aggregation is already supported, but, this does, indeed handle more stuff
+// since the query is used sent
 func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResults, MongoError) {
 	// 1) ensure connection + collection is set
 	if err := mh.getConnection(); err.Error != "" {
 		return MongoResults{}, err
 	}
 
+	// 2) parse JSON into a go value
 	var payload any
 	if err := bson.UnmarshalExtJSON([]byte(rawJSON), true, &payload); err != nil {
 		return MongoResults{}, mh.newMongoError(400, fmt.Sprintf("Invalid JSON: %s", err))
 	}
 
+	// 3) build find options for the non-pipeline branch
 	findOpts := options.Find().
 		SetLimit(int64(mh.perPage)).
 		SetSkip(int64((mh.page - 1) * mh.perPage))
@@ -663,23 +668,42 @@ func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResu
 	var (
 		cur    *mongo.Cursor
 		err    error
-		filter any // for Find & Count
+		filter any // for Find & CountDocuments
 		docs   []map[string]any
 	)
 
 	if asPipeline {
-		// accept []any or primitive.A
+		// normalize payload to []any
+		var pipeline []any
 		switch arr := payload.(type) {
 		case []any:
-			cur, err = mh.collection.Aggregate(ctx, arr)
+			pipeline = append([]any{}, arr...) // copy
 		case primitive.A:
-			pipeline := make([]any, len(arr))
+			pipeline = make([]any, len(arr))
 			copy(pipeline, arr)
-			cur, err = mh.collection.Aggregate(ctx, pipeline)
 		default:
 			return MongoResults{}, mh.newMongoError(400, "For aggregation, JSON must be an array")
 		}
+
+		// inject $sort if provided
+		if len(mh.sort) > 0 {
+			pipeline = append(pipeline, bson.M{"$sort": mh.sort})
+		}
+
+		// ensure page ≥ 1
+		if mh.page < 1 {
+			mh.page = 1
+		}
+
+		// inject $skip and $limit
+		pipeline = append(pipeline,
+			bson.M{"$skip": int64((mh.page - 1) * mh.perPage)},
+			bson.M{"$limit": int64(mh.perPage)},
+		)
+
+		cur, err = mh.collection.Aggregate(ctx, pipeline)
 	} else {
+		// accept document filter types
 		switch f := payload.(type) {
 		case bson.M, primitive.D, map[string]any:
 			filter = f
@@ -694,6 +718,7 @@ func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResu
 	}
 	defer cur.Close(ctx)
 
+	// 5) decode results
 	for cur.Next(ctx) {
 		var doc map[string]any
 		if err := cur.Decode(&doc); err != nil {
@@ -705,6 +730,7 @@ func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResu
 		return MongoResults{}, mh.newMongoError(500, err.Error())
 	}
 
+	// 6) count total matching docs
 	var total int64
 	if asPipeline {
 		total = int64(len(docs))
@@ -715,6 +741,16 @@ func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResu
 		}
 	}
 
+	// getting the query in a readable format
+	var buf bytes.Buffer
+	var compactQ string
+	if err := json.Compact(&buf, []byte(rawJSON)); err != nil {
+		compactQ = strings.TrimSpace(rawJSON)
+	} else {
+		compactQ = buf.String()
+	}
+
+	// 7) wrap into MongoResults
 	totalPages := int((total + int64(mh.perPage) - 1) / int64(mh.perPage))
 	return MongoResults{
 		Status:   true,
@@ -731,7 +767,7 @@ func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResu
 			LastPage:    totalPages,
 			PerPage:     mh.perPage,
 		},
-		Query: rawJSON,
+		Query: compactQ,
 	}, MongoError{}
 }
 

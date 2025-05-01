@@ -3,8 +3,12 @@
 MongoDB API is a Go-Based backend that serves as a nieche method for interacting with MongoDB through an API directly or through the pre-built clients. It's quite fast. It is capable of inseting 2kkk records in under 5 seconds through the AID of goroutines and 
 retrieve data even faster. The project is a WIP so treat it as such.
 
-![alt text](insert-test.png)
-![alt text](insert-result.png)
+## Why?
+Advantages of using this:
+  - no environment dependencis such as nasty extensions or libraries
+  - unified syntax across multiple languages
+  - support for concurrent retrievals and inserts
+  - because, why not?
 
 ## Table of Contents
 
@@ -67,6 +71,14 @@ Create a `.env` file in the root directory of your project with the following va
 API_PORT=9777
 API_HOST=0.0.0.0
 
+# Should we wait for the MongoDB Server instance
+# to boot up? default is true
+WAIT_FOR_MONGO_ON_BOOT=true
+# How long should the MongoDB API instance wait until connection
+# when starting up
+# default, 30 seconds
+WAIT_AT_BOOT=30
+
 # MongoDB Handler
 HANDLER_USE_TIMESTAMPS=true
 HANDLER_DEBUG=true
@@ -84,11 +96,7 @@ MONGO_CONTAINER_EXTERNAL_PORT=27654
 MONGO_API_EXTERNAL_PORT=9874
 
 # Authorization
-# leave this empty if you don't
-# want to use authentication
-# otherwise, you have to provide the "api_key" : "123123124ff" 
-# in the headers
-API_KEY=
+API_KEY=""
 ```
 
 ## API Endpoints
@@ -448,3 +456,63 @@ GET /db/:db_name/:table_name/get/:mongo_id
       "error": "Error message"
     }
     ```
+
+### Run a custom mongodb query
+
+- **URL:** `/db/:db_name/:table_name/custom_query`
+- **Method:** DELETE
+- **URL Params:**
+  - `db_name`: The name of the database.
+  - `table_name`: The name of the collection.
+- **Query Params:**
+  - `sort_by`: sort criteria (optional)
+  - `page`: page number (optional)
+  - `per_page`: per_page (optional)
+  - `use_pipeline`: true / false (optional) - set to true if you run an aggregate query
+- **Payload: ***
+  - payload: ex: { "stats.timePlayed": { "$gte":  10000 } }
+- **Success Response:**
+  - Code: 200
+  - Content:
+    ```json
+    {
+    "status": true,
+    "code": 200,
+    "database": "isac-division2-api",
+    "table": "stats_versioning",
+    "count": 112,
+    "pagination": {
+        "total_pages": 56,
+        "current_page": 1,
+        "next_page": 2,
+        "prev_page": 1,
+        "last_page": 56,
+        "per_page": 2
+    },
+    "query": "{\"stats.timePlayed\":{\"$gte\":10000}}",
+    "results": []
+    }
+    ```
+- **Error Response:**
+  - Code: 400 | 500
+  - Content:
+    ```json
+    {
+      "code": 400 | 500,
+      "status": false,
+      "database": "db_name",
+      "table": "table_name",
+      "error": "Error message"
+    }
+    ```
+
+# Licence:
+MIT License
+
+Copyright (c) [2024] [alexanderthegreat96]
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
