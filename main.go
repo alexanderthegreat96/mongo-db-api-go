@@ -26,7 +26,7 @@ func init() {
 	logger = log.New(os.Stdout, "[MONGO-API]: ", log.Ldate|log.Ltime)
 	env := envparser.NewEnvParser(envparser.WithFilename(".env"), envparser.WithRootPath(true))
 
-	versionNumber := "v1.6.0"
+	versionNumber := "v1.0.6"
 	mongoApiBanner := figure.NewColorFigure(fmt.Sprintf("MongoAPI %s", versionNumber), "", "blue", false)
 	mongoApiBanner.Print()
 	fmt.Println()
