@@ -124,7 +124,6 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 	})
 
 	// retrieve data from a database > collection
-
 	mongoApi.GET("/db/:db_name/:table_name/select", func(c *gin.Context) {
 		dbName := c.Param("db_name")
 		tableName := c.Param("table_name")
@@ -149,7 +148,7 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 			}
 		}
 
-		var sort [][]interface{}
+		var sort [][]any
 		group := ""
 
 		if c.Query("sort") != "" {
@@ -160,13 +159,13 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 			group = c.Query("group_by")
 		}
 
-		var andQuery [][]interface{}
+		var andQuery [][]any
 
 		if c.Query("query_and") != "" {
 			andQuery = helpers.ParseQuery(c.Query("query_and"))
 		}
 
-		var orQuery [][]interface{}
+		var orQuery [][]any
 
 		if c.Query("query_or") != "" {
 			orQuery = helpers.ParseQuery(c.Query("query_or"))
@@ -187,7 +186,7 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 				GroupAll(group).
 				Find()
 
-		var rawQuery interface{}
+		var rawQuery any
 		if resultsErr.Query != "" {
 			rawQuery = json.RawMessage(resultsErr.Query)
 		}
@@ -403,13 +402,13 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 			return
 		}
 
-		var andQuery [][]interface{}
+		var andQuery [][]any
 
 		if c.Query("query_and") != "" {
 			andQuery = helpers.ParseQuery(c.Query("query_and"))
 		}
 
-		var orQuery [][]interface{}
+		var orQuery [][]any
 
 		if c.Query("query_or") != "" {
 			orQuery = helpers.ParseQuery(c.Query("query_or"))
@@ -424,7 +423,7 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 				OrAll(orQuery).
 				Update(convertedPayload)
 
-		var rawQuery interface{}
+		var rawQuery any
 		if updateErr.Query != "" {
 			rawQuery = json.RawMessage(updateErr.Query)
 		}
@@ -489,13 +488,13 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 		dbName := c.Param("db_name")
 		tableName := c.Param("table_name")
 
-		var andQuery [][]interface{}
+		var andQuery [][]any
 
 		if c.Query("query_and") != "" {
 			andQuery = helpers.ParseQuery(c.Query("query_and"))
 		}
 
-		var orQuery [][]interface{}
+		var orQuery [][]any
 
 		if c.Query("query_or") != "" {
 			orQuery = helpers.ParseQuery(c.Query("query_or"))
@@ -510,7 +509,7 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 				OrAll(orQuery).
 				Delete()
 
-		var rawQuery interface{}
+		var rawQuery any
 		if deleteErr.Query != "" {
 			rawQuery = json.RawMessage(deleteErr.Query)
 		}
@@ -539,6 +538,102 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 			Message:   delete.Message,
 			Query:     rawQuery,
 		})
+	})
+
+	mongoApi.POST("/db/:db_name/:table_name/custom-query", func(c *gin.Context) {
+		dbName := c.Param("db_name")
+		tableName := c.Param("table_name")
+		page := 1
+
+		if c.Query("page") != "" {
+			pageNumber, pageNumberErr := strconv.Atoi(c.Query("page"))
+			if pageNumberErr != nil {
+				log.Printf("Issue converting page number to int: %s", pageNumberErr.Error())
+			} else {
+				page = pageNumber
+			}
+		}
+
+		perPage := 10
+
+		if c.Query("per_page") != "" {
+			perPageNumber, perPageNumberErr := strconv.Atoi(c.Query("per_page"))
+			if perPageNumberErr != nil {
+				log.Printf("Issue converting page number to int: %s", perPageNumberErr.Error())
+			} else {
+				perPage = perPageNumber
+			}
+		}
+
+		asPipeline := false
+		if c.Query("as_pipeline") != "" {
+			asPipelineInput, asPipelineInputErr := strconv.ParseBool(c.Query("as_pipeline"))
+			if asPipelineInputErr != nil {
+				log.Printf("Issue converting as_pipeline to bool: %s", asPipelineInputErr.Error())
+			}
+
+			asPipeline = asPipelineInput
+		}
+
+		var customQuery string
+
+		err := c.Request.ParseForm()
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+
+		customQuery = c.Request.Form.Get("payload")
+		if customQuery == "" {
+			c.JSON(http.StatusBadRequest, responses.GenericErrorResponse{
+				Code:     400,
+				Status:   false,
+				Error:    "Failed to provide data under the key 'payload'",
+				Database: dbName,
+				Table:    tableName,
+			})
+			return
+		}
+
+		mongoDb.ResetQuery()
+
+		customQueryResults, customQueryErr := mongoDb.
+			DB(dbName).
+			Table(tableName).
+			Page(page).
+			PerPage(perPage).
+			ExecuteRaw(customQuery, asPipeline)
+
+		if customQueryErr.Error != "" {
+			c.JSON(customQueryErr.Code, responses.GenericErrorResponse{
+				Code:     customQueryErr.Code,
+				Status:   customQueryErr.Status,
+				Error:    customQueryErr.Error,
+				Database: customQueryErr.Database,
+				Table:    customQueryErr.Table,
+				Query:    customQueryErr.Query,
+			})
+			return
+		}
+
+		c.JSON(customQueryResults.Code, responses.SelectResultsResponse{
+			Status:   customQueryResults.Status,
+			Code:     customQueryResults.Code,
+			Database: customQueryResults.Database,
+			Table:    customQueryResults.Table,
+			Count:    customQueryResults.Count,
+			Pagination: responses.SelectResultsPaginationResponse{
+				TotalPages:  customQueryResults.Pagination.TotalPages,
+				CurrentPage: customQueryResults.Pagination.CurrentPage,
+				NextPage:    customQueryResults.Pagination.NextPage,
+				PrevPage:    customQueryResults.Pagination.PrevPage,
+				LastPage:    customQueryResults.Pagination.LastPage,
+				PerPage:     customQueryResults.Pagination.PerPage,
+			},
+			Query:   customQueryResults.Query,
+			Results: customQueryResults.Results,
+		})
+
 	})
 
 	mongoApi.Run(apiHost + ":" + apiPort)

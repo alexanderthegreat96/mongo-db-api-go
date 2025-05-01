@@ -1,12 +1,12 @@
 package responses
 
 type GenericErrorResponse struct {
-	Code     int         `json:"code"`
-	Status   bool        `json:"status"`
-	Error    string      `json:"error"`
-	Database string      `json:"database"`
-	Table    string      `json:"table"`
-	Query    interface{} `json:"query"`
+	Code     int    `json:"code"`
+	Status   bool   `json:"status"`
+	Error    string `json:"error"`
+	Database string `json:"database"`
+	Table    string `json:"table"`
+	Query    any    `json:"query"`
 }
 
 type DatabaseListResponse struct {
@@ -46,24 +46,24 @@ type SelectResultsResponse struct {
 	Table      string                          `json:"table"`
 	Count      int64                           `json:"count"`
 	Pagination SelectResultsPaginationResponse `json:"pagination"`
-	Query      interface{}                     `json:"query"`
-	Results    []map[string]interface{}        `json:"results"`
+	Query      any                             `json:"query"`
+	Results    []map[string]any                `json:"results"`
 }
 
 type MongoOperationsResultResponse struct {
-	Status    bool        `json:"status"`
-	Code      int         `json:"code"`
-	Database  string      `json:"database"`
-	Table     string      `json:"table"`
-	Operation string      `json:"operation"`
-	Message   string      `json:"message"`
-	Query     interface{} `json:"query"`
+	Status    bool   `json:"status"`
+	Code      int    `json:"code"`
+	Database  string `json:"database"`
+	Table     string `json:"table"`
+	Operation string `json:"operation"`
+	Message   string `json:"message"`
+	Query     any    `json:"query"`
 }
 
 type SelectSingleResultResponse struct {
-	Status   bool        `json:"status"`
-	Code     int         `json:"code"`
-	Database string      `json:"database"`
-	Table    string      `json:"table"`
-	Result   interface{} `json:"result"`
+	Status   bool   `json:"status"`
+	Code     int    `json:"code"`
+	Database string `json:"database"`
+	Table    string `json:"table"`
+	Result   any    `json:"result"`
 }

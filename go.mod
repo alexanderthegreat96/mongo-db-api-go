@@ -12,6 +12,7 @@ require (
 )
 
 require (
+	github.com/alexanderthegreat96/envparser/v2 v2.0.0 // indirect
 	github.com/bytedance/sonic v1.11.7 // indirect
 	github.com/bytedance/sonic/loader v0.1.1 // indirect
 	github.com/cloudwego/base64x v0.1.4 // indirect

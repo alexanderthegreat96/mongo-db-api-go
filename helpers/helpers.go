@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -12,14 +11,6 @@ import (
 	"github.com/alexanderthegreat96/go-ordered-map/omap"
 	"go.mongodb.org/mongo-driver/bson"
 )
-
-func GetEnv(key, defaultValue string) string {
-	value := os.Getenv(key)
-	if value == "" {
-		return defaultValue
-	}
-	return value
-}
 
 func ToString(v interface{}) string {
 	return fmt.Sprint(v)
@@ -278,4 +269,62 @@ func AppendUpdatedAtToJson(jsonStr string) bson.D {
 	}
 
 	return result
+}
+
+func MapOperators(operator string, value any) (any, error) {
+	operatorMap := map[string]any{
+		"=":             bson.M{"$eq": value},
+		"!=":            bson.M{"$ne": value},
+		"<>":            bson.M{"$ne": value},
+		"<":             bson.M{"$lt": value},
+		"<=":            bson.M{"$lte": value},
+		">":             bson.M{"$gt": value},
+		">=":            bson.M{"$gte": value},
+		"like":          bson.M{"$regex": value, "$options": "i"},
+		"not_like":      bson.M{"$not": bson.M{"$regex": value}},
+		"ilike":         bson.M{"$regex": value, "$options": "i"},
+		"&":             bson.M{"$bitsAllSet": value},
+		"|":             bson.M{"$bitsAnySet": value},
+		"^":             bson.M{"$bitsAllClear": value},
+		"<<":            bson.M{"$bitsAllClear": value},
+		">>":            bson.M{"$bitsAnyClear": value},
+		"rlike":         bson.M{"$regex": value},
+		"regexp":        bson.M{"$regex": value},
+		"not_regexp":    bson.M{"$not": bson.M{"$regex": value}, "$options": "i"},
+		"exists":        bson.M{"$exists": value},
+		"type":          bson.M{"$type": value},
+		"mod":           bson.M{"$mod": value},
+		"where":         bson.M{"$where": value},
+		"all":           bson.M{"$all": value},
+		"size":          bson.M{"$size": value},
+		"regex":         bson.M{"$regex": value},
+		"not_regex":     bson.M{"$not": bson.M{"$regex": value}, "$options": "i"},
+		"text":          bson.M{"$text": value},
+		"slice":         bson.M{"$slice": value},
+		"elemmatch":     bson.M{"$elemMatch": value},
+		"geowithin":     bson.M{"$geoWithin": value},
+		"geointersects": bson.M{"$geoIntersects": value},
+		"near":          bson.M{"$near": value},
+		"nearsphere":    bson.M{"$nearSphere": value},
+		"geometry":      bson.M{"$geometry": value},
+		"maxdistance":   bson.M{"$maxDistance": value},
+		"center":        bson.M{"$center": value},
+		"centersphere":  bson.M{"$centerSphere": value},
+		"box":           bson.M{"$box": value},
+		"polygon":       bson.M{"$polygon": value},
+		"uniquedocs":    bson.M{"$uniqueDocs": value},
+	}
+	// Special handling for "between".
+	if operator == "between" {
+		v, ok := value.([]any)
+		if !ok || len(v) != 2 {
+			return nil, errors.New("value must be a slice with exactly two elements for 'between'")
+		}
+		return bson.M{"$gte": v[0], "$lte": v[1]}, nil
+	}
+	mappedValue, exists := operatorMap[operator]
+	if !exists {
+		return nil, fmt.Errorf("unknown operator: %s", operator)
+	}
+	return mappedValue, nil
 }

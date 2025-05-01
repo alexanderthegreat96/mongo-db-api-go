@@ -1,23 +1,21 @@
 package main
 
 import (
+	"fmt"
 	"log"
 	"os"
-	"strconv"
 	"time"
 
+	"github.com/alexanderthegreat96/envparser/v2"
 	"github.com/alexanderthegreat96/mongo-db-api-go/api"
 	"github.com/alexanderthegreat96/mongo-db-api-go/driver"
-	"github.com/alexanderthegreat96/mongo-db-api-go/helpers"
 	"github.com/common-nighthawk/go-figure"
-	"github.com/joho/godotenv"
 )
 
 var apiKey string
 var apiPort string
 var apiHost string
 var canBoot bool
-var shoudlWaitForMongoOnBoot bool
 var logger *log.Logger
 var mongoDb *driver.MongoDBHandler
 
@@ -26,39 +24,81 @@ const retryInterval = 5 * time.Second
 
 func init() {
 	logger = log.New(os.Stdout, "[MONGO-API]: ", log.Ldate|log.Ltime)
+	env := envparser.NewEnvParser(envparser.WithFilename(".env"), envparser.WithRootPath(true))
 
 	versionNumber := "v1.0.5"
-	mongoApiBanner := figure.NewColorFigure("MongoAPI "+versionNumber, "", "blue", false)
+	mongoApiBanner := figure.NewColorFigure(fmt.Sprintf("MongoAPI %s", versionNumber), "", "blue", false)
 	mongoApiBanner.Print()
+	fmt.Println()
 
 	canBoot = true
-	err := godotenv.Load()
-	if err != nil {
+	if env.GetError() != "" {
 		canBoot = false
-		logger.Println("Unable to load .env file.")
+		logger.Printf("Issue loading .env file. Err: %s", env.GetError())
 		return
 	}
 
-	logger.Println("Using MongoDB Server Information:")
-	logger.Printf("MongoDB Host: %s", helpers.GetEnv("MONGO_DB_HOST", "Missing: MONGO_DB_HOST"))
-	logger.Printf("MongoDB Port: %s", helpers.GetEnv("MONGO_DB_PORT", "Missing: MONGO_DB_PORT"))
-	logger.Printf("MongoDB Username: %s", helpers.GetEnv("MONGO_DB_USERNAME", "Missing: MONGO_DB_USERNAME"))
-	logger.Printf("MongoDB Password: %s", helpers.GetEnv("MONGO_DB_PASSWORD", "Missing: MONGO_DB_PASSWORD"))
-	logger.Printf("MongoDB Default Database: %s", helpers.GetEnv("MONGO_DB_NAME", "Missing: MONGO_DB_NAME"))
-	logger.Printf("MongoDB Default Table: %s", helpers.GetEnv("MONGO_DB_TABLE", "Missing: MONGO_DB_TABLE"))
+	// used for config checking
+	rawHost, _ := env.GetValue("MONGO_DB_HOST", "string", "localhost")
+	rawPort, _ := env.GetValue("MONGO_DB_PORT", "string", "27017")
+	rawUser, _ := env.GetValue("MONGO_DB_USERNAME", "string", "admin")
+	rawPass, _ := env.GetValue("MONGO_DB_PASSWORD", "string", "admin")
+	rawDB, _ := env.GetValue("MONGO_DB_NAME", "string", "test")
+	rawTable, _ := env.GetValue("MONGO_DB_TABLE", "string", "test")
+	rawWaitBoot, _ := env.GetValue("WAIT_FOR_MONGO_ON_BOOT", "bool", false)
+	rawWaitSecs, _ := env.GetValue("WAIT_AT_BOOT", "int", 30)
 
-	shoudlWaitForMongoOnBoot, _ = strconv.ParseBool(helpers.GetEnv("WAIT_FOR_MONGO_ON_BOOT", "false"))
-	if shoudlWaitForMongoOnBoot {
-		if !waitForMongoConnection() {
-			canBoot = false
-			logger.Println("Unable to connect to the MongoDB server after multiple attempts. Exiting.")
-			return
+	// used for initalizing the API
+	rawAPIKey, _ := env.GetValue("API_KEY", "string", "")
+	rawAPIHost, _ := env.GetValue("API_HOST", "string", "0.0.0.0")
+	rawAPIPort, _ := env.GetValue("API_PORT", "string", "9776")
+
+	mongoHost := rawHost.(string)
+	mongoPort := rawPort.(string)
+	mongoUser := rawUser.(string)
+	mongoPass := rawPass.(string)
+	mongoDatabase := rawDB.(string)
+	mongoCollection := rawTable.(string)
+	waitForMongo := rawWaitBoot.(bool)
+	waitSeconds := rawWaitSecs.(int)
+	apiKey = rawAPIKey.(string)
+	apiHost = rawAPIHost.(string)
+	apiPort = rawAPIPort.(string)
+
+	logger.Println("Using MongoDB Server Information:")
+	logger.Printf("MongoDB Host: %s", mongoHost)
+	logger.Printf("MongoDB Port: %s", mongoPort)
+	logger.Printf("MongoDB Username: %s", mongoUser)
+	logger.Printf("MongoDB Password: %s", mongoPass)
+	logger.Printf("MongoDB Default Database: %s", mongoDatabase)
+	logger.Printf("MongoDB Default Collection: %s", mongoCollection)
+	logger.Printf("Should wait for MongoDB to boot up: %t", waitForMongo)
+	logger.Printf("Wait time for MongoDB to boop up: %d", waitSeconds)
+
+	if apiKey != "" {
+		logger.Printf("Requires API Key: %s", apiKey)
+	}
+
+	logger.Printf("API Host: %s", apiHost)
+	logger.Printf("API Port: %s", apiPort)
+
+	if waitForMongo {
+		if waitSeconds > 0 {
+			logger.Printf("Waiting %d seconds before attempting MongoDB connection...\n", waitSeconds)
+			for i := waitSeconds; i > 0; i-- {
+				fmt.Printf("\r⏳ Connecting in %2d seconds... ", i)
+				time.Sleep(1 * time.Second)
+			}
+			fmt.Println("\r🚀 Attempting to connect now...         ")
 		}
 	}
 
-	apiKey = helpers.GetEnv("API_KEY", "")
-	apiPort = helpers.GetEnv("API_PORT", "9776")
-	apiHost = helpers.GetEnv("API_HOST", "localhost")
+	if !waitForMongoConnection() {
+		canBoot = false
+		logger.Println("Unable to connect to the MongoDB server after multiple attempts. Exiting.")
+		return
+	}
+
 	mongoDb = driver.MongoDB()
 }
 
