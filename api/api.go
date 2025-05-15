@@ -3,12 +3,12 @@ package api
 import (
 	"encoding/json"
 	"fmt"
+	"github.com/alexanderthegreat96/envparser/v2"
 	"log"
 	"net/http"
 	"strconv"
 
 	"github.com/alexanderthegreat96/mongo-db-api-go/driver"
-	"github.com/alexanderthegreat96/mongo-db-api-go/helpers"
 	"github.com/alexanderthegreat96/mongo-db-api-go/responses"
 	"github.com/gin-gonic/gin"
 )
@@ -37,6 +37,7 @@ func apiKeyMiddleware(apiKey string) gin.HandlerFunc {
 		c.Next()
 	}
 }
+
 func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPort string) {
 	// remove when NOT compiling
 	gin.SetMode(gin.ReleaseMode)
@@ -128,6 +129,12 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 	mongoApi.GET("/db/:db_name/:table_name/select", func(c *gin.Context) {
 		dbName := c.Param("db_name")
 		tableName := c.Param("table_name")
+		shouldAutoConvertInputs := true
+
+		if c.Query("auto_convert_inputs") != "" {
+			handle, _ := envparser.ConvertToSpecificType(c.Query("auto_convert_inputs"), "bool")
+			shouldAutoConvertInputs = handle.(bool)
+		}
 
 		page := 1
 		if c.Query("page") != "" {
@@ -153,7 +160,7 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 		group := ""
 
 		if c.Query("sort") != "" {
-			sort = helpers.ParseSort(c.Query("sort"))
+			sort = driver.ParseSort(c.Query("sort"))
 		}
 
 		if c.Query("group_by") != "" {
@@ -163,13 +170,13 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 		var andQuery [][]any
 
 		if c.Query("query_and") != "" {
-			andQuery = helpers.ParseQuery(c.Query("query_and"))
+			andQuery = driver.ParseQuery(c.Query("query_and"), shouldAutoConvertInputs)
 		}
 
 		var orQuery [][]any
 
 		if c.Query("query_or") != "" {
-			orQuery = helpers.ParseQuery(c.Query("query_or"))
+			orQuery = driver.ParseQuery(c.Query("query_or"), shouldAutoConvertInputs)
 		}
 
 		mongoDb.ResetQuery()
@@ -276,7 +283,7 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 			return
 		}
 
-		convertedPayload, convertedPayloadErr := helpers.ConvertJsonToData(payload)
+		convertedPayload, convertedPayloadErr := driver.ConvertJsonToData(payload)
 		if convertedPayloadErr != nil {
 			c.JSON(http.StatusBadRequest, responses.GenericErrorResponse{
 				Code:     400,
@@ -334,7 +341,7 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 			return
 		}
 
-		convertedPayload, convertedPayloadErr := helpers.ConvertJsonToData(payload)
+		convertedPayload, convertedPayloadErr := driver.ConvertJsonToData(payload)
 		if convertedPayloadErr != nil {
 			c.JSON(http.StatusBadRequest, responses.GenericErrorResponse{
 				Code:     400,
@@ -374,6 +381,12 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 		dbName := c.Param("db_name")
 		tableName := c.Param("table_name")
 
+		shouldAutoConvertInputs := true
+		if c.Query("auto_convert_inputs") != "" {
+			handle, _ := envparser.ConvertToSpecificType(c.Query("auto_convert_inputs"), "bool")
+			shouldAutoConvertInputs = handle.(bool)
+		}
+
 		err := c.Request.ParseForm()
 		if err != nil {
 			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
@@ -391,7 +404,7 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 			return
 		}
 
-		convertedPayload, convertedPayloadErr := helpers.ConvertJsonToData(payload)
+		convertedPayload, convertedPayloadErr := driver.ConvertJsonToData(payload)
 		if convertedPayloadErr != nil {
 			c.JSON(http.StatusBadRequest, responses.GenericErrorResponse{
 				Code:     400,
@@ -406,13 +419,13 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 		var andQuery [][]any
 
 		if c.Query("query_and") != "" {
-			andQuery = helpers.ParseQuery(c.Query("query_and"))
+			andQuery = driver.ParseQuery(c.Query("query_and"), shouldAutoConvertInputs)
 		}
 
 		var orQuery [][]any
 
 		if c.Query("query_or") != "" {
-			orQuery = helpers.ParseQuery(c.Query("query_or"))
+			orQuery = driver.ParseQuery(c.Query("query_or"), shouldAutoConvertInputs)
 		}
 
 		mongoDb.ResetQuery()
@@ -488,21 +501,27 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 	mongoApi.DELETE("/db/:db_name/:table_name/delete-where", func(c *gin.Context) {
 		dbName := c.Param("db_name")
 		tableName := c.Param("table_name")
+		shouldAutoConvertInputs := true
+
+		if c.Query("auto_convert_inputs") != "" {
+			handle, _ := envparser.ConvertToSpecificType(c.Query("auto_convert_inputs"), "bool")
+			shouldAutoConvertInputs = handle.(bool)
+		}
 
 		var andQuery [][]any
 
 		if c.Query("query_and") != "" {
-			andQuery = helpers.ParseQuery(c.Query("query_and"))
+			andQuery = driver.ParseQuery(c.Query("query_and"), shouldAutoConvertInputs)
 		}
 
 		var orQuery [][]any
 
 		if c.Query("query_or") != "" {
-			orQuery = helpers.ParseQuery(c.Query("query_or"))
+			orQuery = driver.ParseQuery(c.Query("query_or"), shouldAutoConvertInputs)
 		}
 
 		mongoDb.ResetQuery()
-		delete, deleteErr :=
+		deleteR, deleteErr :=
 			mongoDb.
 				DB(dbName).
 				Table(tableName).
@@ -514,8 +533,8 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 		if deleteErr.Query != "" {
 			rawQuery = json.RawMessage(deleteErr.Query)
 		}
-		if delete.Query != "" {
-			rawQuery = json.RawMessage(delete.Query)
+		if deleteR.Query != "" {
+			rawQuery = json.RawMessage(deleteR.Query)
 		}
 
 		if deleteErr.Error != "" {
@@ -530,13 +549,13 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 			return
 		}
 
-		c.JSON(delete.Code, responses.MongoOperationsResultResponse{
-			Code:      delete.Code,
-			Status:    delete.Status,
-			Database:  delete.Database,
-			Table:     delete.Table,
-			Operation: delete.Operation,
-			Message:   delete.Message,
+		c.JSON(deleteR.Code, responses.MongoOperationsResultResponse{
+			Code:      deleteR.Code,
+			Status:    deleteR.Status,
+			Database:  deleteR.Database,
+			Table:     deleteR.Table,
+			Operation: deleteR.Operation,
+			Message:   deleteR.Message,
 			Query:     rawQuery,
 		})
 	})
@@ -637,5 +656,8 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 
 	})
 
-	mongoApi.Run(fmt.Sprintf("%s:%s", apiHost, apiPort))
+	err := mongoApi.Run(fmt.Sprintf("%s:%s", apiHost, apiPort))
+	if err != nil {
+		return
+	}
 }

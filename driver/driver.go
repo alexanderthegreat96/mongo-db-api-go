@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"github.com/alexanderthegreat96/envparser/v2"
-	"github.com/alexanderthegreat96/mongo-db-api-go/helpers"
 	"github.com/emirpasic/gods/maps/linkedhashmap"
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -183,7 +182,7 @@ func (mh *MongoDBHandler) Where(field string, operator string, value any) *Mongo
 		value = objectID
 	}
 
-	mappedValue, err := helpers.MapOperators(operator, value)
+	mappedValue, err := MapOperators(operator, value)
 	if err != nil {
 		mh.logger.Printf("Error in operator mapping: %s", err.Error())
 		return mh
@@ -193,20 +192,33 @@ func (mh *MongoDBHandler) Where(field string, operator string, value any) *Mongo
 		mh.query = make(map[string]any)
 	}
 
-	// If multiple Where calls are made, merge into an $and array.
-	if mh.multipleWheres {
-		var andCondition []any
-		if existing, exists := mh.query["$and"]; exists {
-			if conditionsArray, ok := existing.([]any); ok {
-				andCondition = append(andCondition, conditionsArray...)
-			}
-		}
-		andCondition = append(andCondition, map[string]any{field: mappedValue})
-		mh.query["$and"] = andCondition
-	} else {
+	if !mh.multipleWheres && len(mh.query) == 0 {
 		mh.query[field] = mappedValue
-		mh.multipleWheres = true
+		return mh
 	}
+
+	if !mh.multipleWheres && len(mh.query) > 0 {
+		var andConditions []any
+		for k, v := range mh.query {
+			andConditions = append(andConditions, map[string]any{k: v})
+		}
+		andConditions = append(andConditions, map[string]any{field: mappedValue})
+		mh.query = map[string]any{"$and": andConditions}
+		mh.multipleWheres = true
+		return mh
+	}
+
+	// Case 3: Already using $and
+	if mh.multipleWheres {
+		existingAnd, ok := mh.query["$and"].([]any)
+		if !ok || existingAnd == nil {
+			existingAnd = []any{}
+		}
+		existingAnd = append(existingAnd, map[string]any{field: mappedValue})
+		mh.query["$and"] = existingAnd
+		return mh
+	}
+
 	return mh
 }
 
@@ -226,7 +238,7 @@ func (mh *MongoDBHandler) OrWhere(field, operator string, value any) *MongoDBHan
 		value = objectID
 	}
 	orCondition := make(map[string]any)
-	mappedValue, err := helpers.MapOperators(operator, value)
+	mappedValue, err := MapOperators(operator, value)
 	if err != nil {
 		mh.logger.Printf("Error in operator mapping: %s", err.Error())
 		return mh
@@ -349,7 +361,7 @@ func (mh *MongoDBHandler) appendTimestampForCreatedAt(data map[string]any) map[s
 		hm.Put("created_at", mh.timeNow)
 		hm.Put("updated_at", mh.timeNow)
 		reEncodedBytes, _ := hm.ToJSON()
-		if result, err := helpers.ConvertJsonToMap(string(reEncodedBytes)); err == nil {
+		if result, err := ConvertJsonToMap(string(reEncodedBytes)); err == nil {
 			return result
 		}
 	}
@@ -940,8 +952,8 @@ func (mh *MongoDBHandler) UpdateByID(recordId string, data any) (MongoOperations
 	}
 	update := bson.M{"$set": dataMap}
 	if mh.useTimestamps {
-		toJsonString, _ := helpers.ConvertMapToJsonOrdered(dataMap)
-		update = bson.M{"$set": helpers.AppendUpdatedAtToJson(toJsonString)}
+		toJsonString, _ := ConvertMapToJsonOrdered(dataMap)
+		update = bson.M{"$set": AppendUpdatedAtToJson(toJsonString)}
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -1142,6 +1154,7 @@ func (mh *MongoDBHandler) ListCollections(dbName string) (MongoTablesListResult,
 func (mh *MongoDBHandler) ResetQuery() *MongoDBHandler {
 	mh.aggregateQuery = []any{}
 	mh.query = make(map[string]any)
+	mh.multipleWheres = false
 	return mh
 }
 
