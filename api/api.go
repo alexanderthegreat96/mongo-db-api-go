@@ -156,6 +156,30 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 			}
 		}
 
+		// used for paginating aggregates
+		innerPage := 1
+		if c.Query("inner_page") != "" {
+			innerPageNumber, innerPageNumberErr := strconv.Atoi(c.Query("inner_page"))
+			if innerPageNumberErr != nil {
+				log.Printf("Issue converting page number to int: %s", innerPageNumberErr.Error())
+			} else {
+				innerPage = innerPageNumber
+			}
+		}
+
+		innerPerPage := 10
+		if c.Query("inner_per_page") != "" {
+			innerPerPageNumber, innerPerPageNumberErr := strconv.Atoi(c.Query("inner_per_page"))
+			if innerPerPageNumberErr != nil {
+				log.Printf("Issue converting page number to int: %s", innerPerPageNumberErr.Error())
+			} else {
+				innerPerPage = innerPerPageNumber
+			}
+		}
+
+		// if group by is present
+		// allow the usage of innerPerPage
+
 		var sort [][]any
 		group := ""
 
@@ -188,6 +212,8 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 				Table(tableName).
 				Page(page).
 				PerPage(perPage).
+				InnerPage(innerPage).
+				InnerPerPage(innerPerPage).
 				AndAll(andQuery).
 				OrAll(orQuery).
 				SortAll(sort).

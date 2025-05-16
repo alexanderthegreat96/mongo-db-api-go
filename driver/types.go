@@ -1,6 +1,7 @@
 package driver
 
 import (
+	"go.mongodb.org/mongo-driver/bson"
 	"log"
 	"time"
 
@@ -12,10 +13,12 @@ type MongoDBHandler struct {
 	debug          bool
 	limit          int
 	perPage        int
+	innerPage      int
+	innerPerPage   int
 	page           int
 	sort           []primitive.E
 	query          map[string]any
-	aggregateQuery []any
+	aggregateQuery bson.A
 	multipleWheres bool
 	host           string
 	port           string

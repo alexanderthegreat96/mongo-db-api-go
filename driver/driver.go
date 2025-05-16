@@ -165,6 +165,21 @@ func (mh *MongoDBHandler) PerPage(perPage int) *MongoDBHandler {
 	return mh
 }
 
+func (mh *MongoDBHandler) InnerPage(p int) *MongoDBHandler {
+	if p < 1 {
+		p = 1
+	}
+	mh.innerPage = p
+	return mh
+}
+func (mh *MongoDBHandler) InnerPerPage(n int) *MongoDBHandler {
+	if n < 1 || n > 300 {
+		n = 10
+	}
+	mh.innerPerPage = n
+	return mh
+}
+
 // Where adds a filter constraint.
 // If the field is "_id", it ensures that the value is a valid ObjectID.
 func (mh *MongoDBHandler) Where(field string, operator string, value any) *MongoDBHandler {
@@ -265,39 +280,83 @@ func (mh *MongoDBHandler) SortBy(field, order string) *MongoDBHandler {
 // GroupBy builds an aggregation pipeline that groups documents by the given field,
 // then applies optional sorting and pagination on the grouped results.
 func (mh *MongoDBHandler) GroupBy(field string) *MongoDBHandler {
-	var pipeline []any
-
-	// 1. If a filter query exists, match it first.
-	if len(mh.query) > 0 {
-		pipeline = append(pipeline, bson.M{"$match": mh.query})
-	}
-
-	// 2. Group the documents by the given field.
-	groupStage := bson.M{
-		"$group": bson.M{
-			"_id":     "$" + field,
-			"records": bson.M{"$push": "$$ROOT"},
-		},
-	}
-	pipeline = append(pipeline, groupStage)
-
-	// 3. Apply sorting to the groups if specified.
-	if len(mh.sort) > 0 {
-		sortStage := bson.M{"$sort": mh.sort}
-		pipeline = append(pipeline, sortStage)
-	}
-
-	// 4. Enforce that page is at least 1.
+	// 1) clamp outer page & inner page parameters
 	if mh.page < 1 {
 		mh.page = 1
 	}
 
-	// 5. Paginate the grouped results.
-	skipStage := bson.M{"$skip": (mh.page - 1) * mh.perPage}
-	limitStage := bson.M{"$limit": mh.perPage}
-	pipeline = append(pipeline, skipStage, limitStage)
+	if mh.perPage < 1 {
+		mh.perPage = 10
+	}
 
-	// Save the pipeline for use in Find().
+	if mh.innerPage < 1 {
+		mh.innerPage = 1
+	}
+
+	if mh.innerPerPage < 1 {
+		mh.innerPerPage = 10
+	}
+
+	// 2) calculate skips & limits
+	groupSkip := (mh.page - 1) * mh.perPage
+	groupLimit := mh.perPage
+	recordSkip := (mh.innerPage - 1) * mh.innerPerPage
+	recordLimit := mh.innerPerPage
+
+	// 3) build the pipeline
+	var pipeline []any
+
+	// a) match outer filters
+	if len(mh.query) > 0 {
+		pipeline = append(pipeline, bson.M{"$match": mh.query})
+	}
+	// b) sort before grouping
+	if len(mh.sort) > 0 {
+		pipeline = append(pipeline, bson.M{"$sort": mh.sort})
+	}
+	// c) group into arrays + count
+	pipeline = append(pipeline, bson.M{"$group": bson.M{
+		"_id":           "$" + field,
+		"records":       bson.M{"$push": "$$ROOT"},
+		"total_records": bson.M{"$sum": 1},
+	}})
+	// d) page the groups
+	pipeline = append(pipeline, bson.M{"$skip": groupSkip})
+	pipeline = append(pipeline, bson.M{"$limit": groupLimit})
+	// e) slice each group's records + inner pagination metadata
+	totalPagesExpr := bson.M{"$ceil": bson.M{
+		"$divide": []any{"$total_records", recordLimit},
+	}}
+
+	pipeline = append(pipeline, bson.M{"$project": bson.M{
+		"_id":           1,
+		"total_records": 1,
+		"records":       bson.M{"$slice": []any{"$records", recordSkip, recordLimit}},
+		"inner_pagination": bson.M{
+			// these two were previously dropped, now forced into output:
+			"current_page": bson.M{"$literal": mh.innerPage},
+			"per_page":     bson.M{"$literal": recordLimit},
+			// these were already working as expressions:
+			"total_pages": totalPagesExpr,
+			"last_page":   totalPagesExpr,
+			"next_page": bson.M{"$cond": []any{
+				bson.M{"$lt": []any{mh.innerPage, totalPagesExpr}},
+				mh.innerPage + 1,
+				mh.innerPage,
+			}},
+			"prev_page": bson.M{"$cond": []any{
+				bson.M{"$gt": []any{mh.innerPage, 1}},
+				mh.innerPage - 1,
+				1,
+			}},
+		},
+	}})
+
+	// applies sorting again
+	if len(mh.sort) > 0 {
+		pipeline = append(pipeline, bson.M{"$sort": mh.sort})
+	}
+
 	mh.aggregateQuery = pipeline
 	return mh
 }
@@ -728,7 +787,13 @@ func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResu
 	if err != nil {
 		return MongoResults{}, mh.newMongoError(500, err.Error())
 	}
-	defer cur.Close(ctx)
+
+	defer func(cur *mongo.Cursor, ctx context.Context) {
+		err := cur.Close(ctx)
+		if err != nil {
+			mh.logger.Println(err.Error())
+		}
+	}(cur, ctx)
 
 	// 5) decode results
 	for cur.Next(ctx) {
@@ -797,6 +862,116 @@ func maxInt(a, b int) int {
 }
 
 // Find executes either a simple find query or an aggregate pipeline (if built) and applies pagination.
+// keeping it here as the next approach could be buggyg
+//func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
+//	if mh.client == nil {
+//		if err := mh.getConnection(); err.Error != "" {
+//			return MongoResults{}, err
+//		}
+//	}
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+//	defer cancel()
+//
+//	// Validate pagination parameters.
+//	if mh.page < 1 {
+//		mh.page = 1
+//	}
+//	if mh.perPage <= 0 {
+//		mh.perPage = 10
+//	}
+//
+//	opts := options.Find().SetCollation(&options.Collation{
+//		Locale:   "en",
+//		Strength: 2,
+//	})
+//	if len(mh.sort) > 0 {
+//		opts.SetSort(mh.sort)
+//	}
+//	opts.SetLimit(int64(mh.perPage))
+//	opts.SetSkip(int64((mh.page - 1) * mh.perPage))
+//
+//	resultsChan := make(chan []map[string]any, 1)
+//	errChan := make(chan error, 1)
+//
+//	go func() {
+//		var cur *mongo.Cursor
+//		var err error
+//		if len(mh.aggregateQuery) > 0 {
+//			mh.logger.Println("Running aggregate query...")
+//			cur, err = mh.collection.Aggregate(ctx, mh.aggregateQuery)
+//		} else {
+//			mh.logger.Println("Running filter query...")
+//			cur, err = mh.collection.Find(ctx, mh.query, opts)
+//		}
+//		if err != nil {
+//			errChan <- err
+//			return
+//		}
+//		defer func(cur *mongo.Cursor, ctx context.Context) {
+//			err := cur.Close(ctx)
+//			if err != nil {
+//				mh.logger.Println("Error closing cursor")
+//			}
+//		}(cur, ctx)
+//
+//		var results []map[string]any
+//		for cur.Next(ctx) {
+//			var result map[string]any
+//			if err := cur.Decode(&result); err != nil {
+//				errChan <- err
+//				return
+//			}
+//			results = append(results, result)
+//		}
+//		if err := cur.Err(); err != nil {
+//			errChan <- err
+//			return
+//		}
+//		resultsChan <- results
+//	}()
+//
+//	select {
+//	case err := <-errChan:
+//		return MongoResults{}, mh.newMongoError(500, err.Error())
+//	case <-time.After(5 * time.Second):
+//		return MongoResults{}, mh.newMongoError(500, "Timeout while fetching results")
+//	case results := <-resultsChan:
+//		totalCount, err := mh.TotalCount()
+//		if err != nil {
+//			return MongoResults{}, mh.newMongoError(500, err.Error())
+//		}
+//		totalPages := (int(totalCount) + mh.perPage - 1) / mh.perPage
+//		currentPage := mh.page
+//		prevPage := 1
+//		nextPage := 1
+//		if currentPage > 1 {
+//			prevPage = currentPage - 1
+//		}
+//		if currentPage < totalPages {
+//			nextPage = currentPage + 1
+//		}
+//		plainQuery, _ := mh.Query()
+//		return MongoResults{
+//			Status:   true,
+//			Code:     200,
+//			Database: mh.dbName,
+//			Table:    mh.tableName,
+//			Count:    totalCount,
+//			Results:  results,
+//			Pagination: MongoResultPagination{
+//				TotalPages:  totalPages,
+//				CurrentPage: currentPage,
+//				NextPage:    nextPage,
+//				PrevPage:    prevPage,
+//				LastPage:    totalPages,
+//				PerPage:     mh.perPage,
+//			},
+//			Query: plainQuery,
+//		}, MongoError{}
+//	}
+//}
+
 func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 	if mh.client == nil {
 		if err := mh.getConnection(); err.Error != "" {
@@ -804,10 +979,7 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 		}
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	// Validate pagination parameters.
+	// normalize pagination
 	if mh.page < 1 {
 		mh.page = 1
 	}
@@ -815,90 +987,220 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 		mh.perPage = 10
 	}
 
-	opts := options.Find().SetCollation(&options.Collation{
-		Locale:   "en",
-		Strength: 2,
-	})
-	if len(mh.sort) > 0 {
-		opts.SetSort(mh.sort)
-	}
-	opts.SetLimit(int64(mh.perPage))
-	opts.SetSkip(int64((mh.page - 1) * mh.perPage))
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
 
-	resultsChan := make(chan []map[string]any, 1)
-	errChan := make(chan error, 1)
-
-	go func() {
-		var cur *mongo.Cursor
-		var err error
-		if len(mh.aggregateQuery) > 0 {
-			mh.logger.Println("Running aggregate query...")
-			cur, err = mh.collection.Aggregate(ctx, mh.aggregateQuery)
-		} else {
-			mh.logger.Println("Running filter query...")
-			cur, err = mh.collection.Find(ctx, mh.query, opts)
+	// ---------------------------------------------------
+	// 1) Regular filtering
+	// ---------------------------------------------------
+	if len(mh.aggregateQuery) == 0 {
+		opts := options.Find().
+			SetCollation(&options.Collation{Locale: "en", Strength: 2}).
+			SetSkip(int64((mh.page - 1) * mh.perPage)).
+			SetLimit(int64(mh.perPage))
+		if len(mh.sort) > 0 {
+			opts.SetSort(mh.sort)
 		}
-		if err != nil {
-			errChan <- err
-			return
-		}
-		defer cur.Close(ctx)
 
-		var results []map[string]any
-		for cur.Next(ctx) {
-			var result map[string]any
-			if err := cur.Decode(&result); err != nil {
-				errChan <- err
+		resultsCh := make(chan []map[string]any, 1)
+		errCh := make(chan error, 1)
+
+		go func() {
+			cur, err := mh.collection.Find(ctx, mh.query, opts)
+			if err != nil {
+				errCh <- err
 				return
 			}
-			results = append(results, result)
+			defer func(cur *mongo.Cursor, ctx context.Context) {
+				err := cur.Close(ctx)
+				if err != nil {
+					mh.logger.Println(err.Error())
+				}
+			}(cur, ctx)
+
+			var docs []map[string]any
+			for cur.Next(ctx) {
+				var doc map[string]any
+				if err := cur.Decode(&doc); err != nil {
+					errCh <- err
+					return
+				}
+				docs = append(docs, doc)
+			}
+			if err := cur.Err(); err != nil {
+				errCh <- err
+				return
+			}
+			resultsCh <- docs
+		}()
+
+		select {
+		case err := <-errCh:
+			return MongoResults{}, mh.newMongoError(500, err.Error())
+		case <-ctx.Done():
+			return MongoResults{}, mh.newMongoError(500, "Timeout while fetching results")
+		case docs := <-resultsCh:
+			totalCount, err := mh.TotalCount()
+			if err != nil {
+				return MongoResults{}, mh.newMongoError(500, err.Error())
+			}
+			totalPages := (int(totalCount) + mh.perPage - 1) / mh.perPage
+			prev, next := 1, 1
+			if mh.page > 1 {
+				prev = mh.page - 1
+			}
+			if mh.page < totalPages {
+				next = mh.page + 1
+			}
+			q, _ := mh.Query()
+
+			return MongoResults{
+				Status:   true,
+				Code:     200,
+				Database: mh.dbName,
+				Table:    mh.tableName,
+				Count:    totalCount,
+				Results:  docs,
+				Pagination: MongoResultPagination{
+					TotalPages:  totalPages,
+					CurrentPage: mh.page,
+					NextPage:    next,
+					PrevPage:    prev,
+					LastPage:    totalPages,
+					PerPage:     mh.perPage,
+				},
+				Query: q,
+			}, MongoError{}
 		}
-		if err := cur.Err(); err != nil {
-			errChan <- err
+	}
+
+	// ---------------------------------------------------
+	// 2) Grouped‐by branch: uses 2 goroutines -> count and match
+	// ---------------------------------------------------
+	// build count pipeline
+	countPipe := []bson.M{}
+	if len(mh.query) > 0 {
+		countPipe = append(countPipe, bson.M{"$match": mh.query})
+	}
+	// mh.aggregateQuery already contains match, group, sort, skip, limit
+	// but for counting we only need match + group + count:
+	// extract group stage:
+	groupStage := mh.aggregateQuery[0].(bson.M)
+
+	for _, stage := range mh.aggregateQuery {
+		if m, ok := stage.(bson.M); ok {
+			if _, hasGroup := m["$group"]; hasGroup {
+				groupStage = m
+				break
+			}
+		}
+	}
+	countPipe = append(countPipe, groupStage, bson.M{"$count": "total"})
+
+	type countResult struct {
+		Total int64 `bson:"total"`
+	}
+	cntCh := make(chan countResult, 1)
+	errCh := make(chan error, 2)
+
+	go func() {
+		cur, err := mh.collection.Aggregate(ctx, countPipe)
+		if err != nil {
+			errCh <- err
 			return
 		}
-		resultsChan <- results
+		defer func(cur *mongo.Cursor, ctx context.Context) {
+			err := cur.Close(ctx)
+			if err != nil {
+				errCh <- err
+			}
+		}(cur, ctx)
+
+		var cr countResult
+		cr.Total = 0
+		if cur.Next(ctx) {
+			if err := cur.Decode(&cr); err != nil {
+				errCh <- err
+				return
+			}
+		}
+		cntCh <- cr
 	}()
 
-	select {
-	case err := <-errChan:
-		return MongoResults{}, mh.newMongoError(500, err.Error())
-	case <-time.After(5 * time.Second):
-		return MongoResults{}, mh.newMongoError(500, "Timeout while fetching results")
-	case results := <-resultsChan:
-		totalCount, err := mh.TotalCount()
+	// build data pipeline (reuse mh.aggregateQuery)
+	dataCh := make(chan []map[string]any, 1)
+	go func() {
+		cur, err := mh.collection.Aggregate(ctx, mh.aggregateQuery)
 		if err != nil {
+			errCh <- err
+			return
+		}
+		defer func(cur *mongo.Cursor, ctx context.Context) {
+			err := cur.Close(ctx)
+			if err != nil {
+				errCh <- err
+			}
+		}(cur, ctx)
+
+		var buckets []map[string]any
+		for cur.Next(ctx) {
+			var b map[string]any
+			if err := cur.Decode(&b); err != nil {
+				errCh <- err
+				return
+			}
+			buckets = append(buckets, b)
+		}
+		dataCh <- buckets
+	}()
+
+	// wait for both
+	var (
+		cntRes countResult
+		data   []map[string]any
+	)
+	for i := 0; i < 2; i++ {
+		select {
+		case err := <-errCh:
 			return MongoResults{}, mh.newMongoError(500, err.Error())
+		case cr := <-cntCh:
+			cntRes = cr
+		case buckets := <-dataCh:
+			data = buckets
+		case <-ctx.Done():
+			return MongoResults{}, mh.newMongoError(500, "Timeout while aggregating")
 		}
-		totalPages := (int(totalCount) + mh.perPage - 1) / mh.perPage
-		currentPage := mh.page
-		prevPage := 1
-		nextPage := 1
-		if currentPage > 1 {
-			prevPage = currentPage - 1
-		}
-		if currentPage < totalPages {
-			nextPage = currentPage + 1
-		}
-		plainQuery, _ := mh.Query()
-		return MongoResults{
-			Status:   true,
-			Code:     200,
-			Database: mh.dbName,
-			Table:    mh.tableName,
-			Count:    totalCount,
-			Results:  results,
-			Pagination: MongoResultPagination{
-				TotalPages:  totalPages,
-				CurrentPage: currentPage,
-				NextPage:    nextPage,
-				PrevPage:    prevPage,
-				LastPage:    totalPages,
-				PerPage:     mh.perPage,
-			},
-			Query: plainQuery,
-		}, MongoError{}
 	}
+
+	totalGroups := cntRes.Total
+	totalPages := int((totalGroups + int64(mh.perPage) - 1) / int64(mh.perPage))
+	prev, next := 1, 1
+	if mh.page > 1 {
+		prev = mh.page - 1
+	}
+	if mh.page < totalPages {
+		next = mh.page + 1
+	}
+
+	aggregateQuery, _ := json.Marshal(mh.aggregateQuery)
+
+	return MongoResults{
+		Status:   true,
+		Code:     200,
+		Database: mh.dbName,
+		Table:    mh.tableName,
+		Count:    totalGroups,
+		Results:  data,
+		Pagination: MongoResultPagination{
+			TotalPages:  totalPages,
+			CurrentPage: mh.page,
+			NextPage:    next,
+			PrevPage:    prev,
+			LastPage:    totalPages,
+			PerPage:     mh.perPage,
+		},
+		Query: string(aggregateQuery),
+	}, MongoError{}
 }
 
 // Update performs an update based on the current query.
