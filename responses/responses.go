@@ -68,7 +68,6 @@ type SelectSingleResultResponse struct {
 	Result   any    `json:"result"`
 }
 
-// inner pagination for each group
 type InnerPaginationResponse struct {
 	TotalPages  int `json:"total_pages"`
 	CurrentPage int `json:"current_page"`
@@ -78,22 +77,29 @@ type InnerPaginationResponse struct {
 	PerPage     int `json:"per_page"`
 }
 
-// one bucket of grouped results
 type GroupBucketResponse struct {
-	ID              any                     `json:"_id"`           // the group key
-	TotalRecords    int64                   `json:"total_records"` // how many items in that group
-	Records         []map[string]any        `json:"records"`       // the paged slice
+	ID              any                     `json:"_id"`
+	TotalRecords    int64                   `json:"total_records"`
+	Records         []map[string]any        `json:"records"`
 	InnerPagination InnerPaginationResponse `json:"inner_pagination"`
 }
 
-// the top-level response when grouping is used
 type SelectGroupedResultsResponse struct {
 	Status     bool                    `json:"status"`
 	Code       int                     `json:"code"`
 	Database   string                  `json:"database"`
 	Table      string                  `json:"table"`
-	Count      int                     `json:"count"`      // number of group buckets (usually 1)
-	Pagination InnerPaginationResponse `json:"pagination"` // show inner pagination here
+	Count      int                     `json:"count"`
+	Pagination InnerPaginationResponse `json:"pagination"`
 	Query      any                     `json:"query"`
 	Results    []GroupBucketResponse   `json:"results"`
+}
+
+type CountResultsResponse struct {
+	Status   bool   `json:"status"`
+	Code     int    `json:"code"`
+	Database string `json:"database"`
+	Table    string `json:"table"`
+	Count    int64  `json:"count"`
+	Query    any    `json:"query"`
 }

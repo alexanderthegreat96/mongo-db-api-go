@@ -1182,7 +1182,7 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 		next = mh.page + 1
 	}
 
-	aggregateQuery, _ := json.Marshal(mh.aggregateQuery)
+	q, _ := mh.Query()
 
 	return MongoResults{
 		Status:   true,
@@ -1199,7 +1199,7 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 			LastPage:    totalPages,
 			PerPage:     mh.perPage,
 		},
-		Query: string(aggregateQuery),
+		Query: q,
 	}, MongoError{}
 }
 
@@ -1449,6 +1449,98 @@ func (mh *MongoDBHandler) ListCollections(dbName string) (MongoTablesListResult,
 		Code:     200,
 		Database: dbName,
 		Tables:   collections,
+	}, MongoError{}
+}
+
+func (mh *MongoDBHandler) Count() (CountMongoResult, MongoError) {
+	if mh.client == nil {
+		if err := mh.getConnection(); err.Error != "" {
+			return CountMongoResult{}, err
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if len(mh.aggregateQuery) == 0 {
+		count, err := mh.collection.CountDocuments(ctx, mh.query)
+		if err != nil {
+			return CountMongoResult{}, MongoError{Error: err.Error()}
+		}
+		q, _ := mh.Query()
+
+		return CountMongoResult{
+			Status:   true,
+			Code:     200,
+			Database: mh.dbName,
+			Table:    mh.tableName,
+			Count:    count,
+			Message:  "Documents have been counted based on filters.",
+			Query:    q,
+		}, MongoError{}
+	}
+
+	var countPipe []bson.M
+	if len(mh.query) > 0 {
+		countPipe = append(countPipe, bson.M{"$match": mh.query})
+	}
+
+	for _, stage := range mh.aggregateQuery {
+		m, ok := stage.(bson.M)
+		if !ok {
+			continue
+		}
+		if _, isSkip := m["$skip"]; isSkip {
+			continue
+		}
+		if _, isLimit := m["$limit"]; isLimit {
+			continue
+		}
+		if _, isSort := m["$sort"]; isSort {
+			continue
+		}
+		countPipe = append(countPipe, m)
+	}
+	// Append the final count stage
+	countPipe = append(countPipe, bson.M{"$count": "total"})
+
+	cursor, err := mh.collection.Aggregate(ctx, countPipe)
+	if err != nil {
+		return CountMongoResult{}, MongoError{Error: err.Error()}
+	}
+	defer func(cur *mongo.Cursor) {
+		if err := cur.Close(ctx); err != nil {
+			mh.logger.Println(err.Error())
+		}
+	}(cursor)
+
+	type countResult struct {
+		Total int64 `bson:"total"`
+	}
+	var cr countResult
+	if cursor.Next(ctx) {
+		if err := cursor.Decode(&cr); err != nil {
+			return CountMongoResult{}, MongoError{Error: err.Error()}
+		}
+	}
+
+	if err := cursor.Err(); err != nil {
+		return CountMongoResult{}, MongoError{Error: err.Error()}
+	}
+
+	pipeJSON, err := json.Marshal(countPipe)
+	if err != nil {
+		return CountMongoResult{}, MongoError{Error: err.Error()}
+	}
+
+	return CountMongoResult{
+		Status:   true,
+		Code:     200,
+		Database: mh.dbName,
+		Table:    mh.tableName,
+		Count:    cr.Total,
+		Message:  "Documents have been counted based on aggregation filters.",
+		Query:    string(pipeJSON),
 	}, MongoError{}
 }
 

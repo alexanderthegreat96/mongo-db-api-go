@@ -682,6 +682,82 @@ func RunApi(mongoDb driver.MongoDBHandler, apiKey string, apiHost string, apiPor
 
 	})
 
+	mongoApi.GET("/db/:db_name/:table_name/count", func(c *gin.Context) {
+		dbName := c.Param("db_name")
+		tableName := c.Param("table_name")
+		shouldAutoConvertInputs := true
+
+		if c.Query("auto_convert_inputs") != "" {
+			handle, _ := envparser.ConvertToSpecificType(c.Query("auto_convert_inputs"), "bool")
+			shouldAutoConvertInputs = handle.(bool)
+		}
+
+		var sort [][]any
+		group := ""
+
+		if c.Query("sort") != "" {
+			sort = driver.ParseSort(c.Query("sort"))
+		}
+
+		if c.Query("group_by") != "" {
+			group = c.Query("group_by")
+		}
+
+		var andQuery [][]any
+
+		if c.Query("query_and") != "" {
+			andQuery = driver.ParseQuery(c.Query("query_and"), shouldAutoConvertInputs)
+		}
+
+		var orQuery [][]any
+
+		if c.Query("query_or") != "" {
+			orQuery = driver.ParseQuery(c.Query("query_or"), shouldAutoConvertInputs)
+		}
+
+		mongoDb.ResetQuery()
+		mongoDb.ResetSort()
+
+		results, resultsErr :=
+			mongoDb.
+				DB(dbName).
+				Table(tableName).
+				AndAll(andQuery).
+				OrAll(orQuery).
+				SortAll(sort).
+				GroupAll(group).
+				Count()
+
+		var rawQuery any
+		if resultsErr.Query != "" {
+			rawQuery = json.RawMessage(resultsErr.Query)
+		}
+		if results.Query != "" {
+			rawQuery = json.RawMessage(results.Query)
+		}
+
+		if resultsErr.Error != "" {
+			c.JSON(results.Code, responses.GenericErrorResponse{
+				Code:     resultsErr.Code,
+				Status:   resultsErr.Status,
+				Error:    resultsErr.Error,
+				Database: resultsErr.Database,
+				Table:    resultsErr.Table,
+				Query:    rawQuery,
+			})
+			return
+		}
+
+		c.JSON(results.Code, responses.CountResultsResponse{
+			Status:   results.Status,
+			Code:     results.Code,
+			Database: results.Database,
+			Table:    results.Table,
+			Count:    results.Count,
+			Query:    rawQuery,
+		})
+	})
+
 	err := mongoApi.Run(fmt.Sprintf("%s:%s", apiHost, apiPort))
 	if err != nil {
 		return

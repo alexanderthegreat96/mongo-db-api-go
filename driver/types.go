@@ -96,3 +96,13 @@ type SingleMongoResult struct {
 	IdType   string
 	Result   any
 }
+
+type CountMongoResult struct {
+	Status   bool
+	Code     int
+	Database string
+	Table    string
+	Count    int64
+	Message  string
+	Query    string
+}
