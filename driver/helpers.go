@@ -10,6 +10,7 @@ import (
 
 	"github.com/alexanderthegreat96/go-ordered-map/omap"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 func ToString(v interface{}) string {
@@ -28,17 +29,62 @@ func foundInList(input string, list []string) bool {
 }
 
 func convertStringToType(value string) interface{} {
+	val := strings.ToLower(strings.TrimSpace(value))
+
+	// Handle null
+	if val == "null" {
+		return nil
+	}
+
+	// Handle boolean
+	if val == "true" {
+		return true
+	}
+	if val == "false" {
+		return false
+	}
+
+	// Handle integer
 	if int64Val, err := strconv.ParseInt(value, 10, 64); err == nil {
+		// Heuristic: use int if in 32-bit range
 		if int64Val <= int64(^uint32(0)>>1) {
 			return int(int64Val)
 		}
 		return int64Val
 	}
 
+	// Handle float
 	if floatVal, err := strconv.ParseFloat(value, 64); err == nil {
 		return floatVal
 	}
 
+	// Handle RFC3339 datetime (e.g. 2025-07-21T12:00:00Z)
+	if t, err := time.Parse(time.RFC3339, value); err == nil {
+		return t
+	}
+
+	// Handle Unix timestamp (seconds or milliseconds)
+	if ts, err := strconv.ParseInt(value, 10, 64); err == nil {
+		if ts > 1e12 {
+			// Milliseconds
+			return time.UnixMilli(ts)
+		}
+		// Seconds
+		return time.Unix(ts, 0)
+	}
+
+	// Handle ObjectID (for MongoDB `_id` or similar fields)
+	if oid, err := primitive.ObjectIDFromHex(value); err == nil {
+		return oid
+	}
+
+	// Handle arrays or JSON objects
+	var jsonResult interface{}
+	if err := json.Unmarshal([]byte(value), &jsonResult); err == nil {
+		return jsonResult
+	}
+
+	// Return as string fallback
 	return value
 }
 
