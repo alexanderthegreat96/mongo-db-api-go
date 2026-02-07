@@ -75,7 +75,6 @@ func MongoDB() *MongoDBHandler {
 	}
 }
 
-// convertMongoID converts an ObjectID (or other type) to a string.
 func convertMongoID(id any) string {
 	if objID, ok := id.(primitive.ObjectID); ok {
 		return objID.Hex()
@@ -83,7 +82,6 @@ func convertMongoID(id any) string {
 	return fmt.Sprintf("%v", id)
 }
 
-// CanConnectToMongo tests the connection.
 func (mh *MongoDBHandler) CanConnectToMongo() bool {
 	if mh.client == nil {
 		if err := mh.getConnection(); err.Error != "" {
@@ -93,7 +91,6 @@ func (mh *MongoDBHandler) CanConnectToMongo() bool {
 	return true
 }
 
-// getConnection sets up the connection if not already done.
 func (mh *MongoDBHandler) getConnection() MongoError {
 	mh.logger.Println("Connecting to Mongo Server...")
 
@@ -180,8 +177,6 @@ func (mh *MongoDBHandler) InnerPerPage(n int) *MongoDBHandler {
 	return mh
 }
 
-// Where adds a filter constraint.
-// If the field is "_id", it ensures that the value is a valid ObjectID.
 func (mh *MongoDBHandler) Where(field string, operator string, value any) *MongoDBHandler {
 	if field == "_id" {
 		strVal, ok := value.(string)
@@ -223,7 +218,6 @@ func (mh *MongoDBHandler) Where(field string, operator string, value any) *Mongo
 		return mh
 	}
 
-	// Case 3: Already using $and
 	if mh.multipleWheres {
 		existingAnd, ok := mh.query["$and"].([]any)
 		if !ok || existingAnd == nil {
@@ -237,7 +231,6 @@ func (mh *MongoDBHandler) Where(field string, operator string, value any) *Mongo
 	return mh
 }
 
-// OrWhere adds an OR filter constraint.
 func (mh *MongoDBHandler) OrWhere(field, operator string, value any) *MongoDBHandler {
 	if field == "_id" {
 		strVal, ok := value.(string)
@@ -267,7 +260,6 @@ func (mh *MongoDBHandler) OrWhere(field, operator string, value any) *MongoDBHan
 	return mh
 }
 
-// SortBy adds a sort order for the given field.
 func (mh *MongoDBHandler) SortBy(field, order string) *MongoDBHandler {
 	var sortOrder int32 = -1
 	if strings.ToLower(order) == "asc" {
@@ -277,10 +269,7 @@ func (mh *MongoDBHandler) SortBy(field, order string) *MongoDBHandler {
 	return mh
 }
 
-// GroupBy builds an aggregation pipeline that groups documents by the given field,
-// then applies optional sorting and pagination on the grouped results.
 func (mh *MongoDBHandler) GroupBy(field string) *MongoDBHandler {
-	// 1) clamp outer page & inner page parameters
 	if mh.page < 1 {
 		mh.page = 1
 	}
@@ -296,34 +285,30 @@ func (mh *MongoDBHandler) GroupBy(field string) *MongoDBHandler {
 	if mh.innerPerPage < 1 {
 		mh.innerPerPage = 10
 	}
-
-	// 2) calculate skips & limits
 	groupSkip := (mh.page - 1) * mh.perPage
 	groupLimit := mh.perPage
 	recordSkip := (mh.innerPage - 1) * mh.innerPerPage
 	recordLimit := mh.innerPerPage
 
-	// 3) build the pipeline
 	var pipeline []any
 
-	// a) match outer filters
 	if len(mh.query) > 0 {
 		pipeline = append(pipeline, bson.M{"$match": mh.query})
 	}
-	// b) sort before grouping
+
 	if len(mh.sort) > 0 {
 		pipeline = append(pipeline, bson.M{"$sort": mh.sort})
 	}
-	// c) group into arrays + count
+
 	pipeline = append(pipeline, bson.M{"$group": bson.M{
 		"_id":           "$" + field,
 		"records":       bson.M{"$push": "$$ROOT"},
 		"total_records": bson.M{"$sum": 1},
 	}})
-	// d) page the groups
+
 	pipeline = append(pipeline, bson.M{"$skip": groupSkip})
 	pipeline = append(pipeline, bson.M{"$limit": groupLimit})
-	// e) slice each group's records + inner pagination metadata
+
 	totalPagesExpr := bson.M{"$ceil": bson.M{
 		"$divide": []any{"$total_records", recordLimit},
 	}}
@@ -333,12 +318,10 @@ func (mh *MongoDBHandler) GroupBy(field string) *MongoDBHandler {
 		"total_records": 1,
 		"records":       bson.M{"$slice": []any{"$records", recordSkip, recordLimit}},
 		"inner_pagination": bson.M{
-			// these two were previously dropped, now forced into output:
 			"current_page": bson.M{"$literal": mh.innerPage},
 			"per_page":     bson.M{"$literal": recordLimit},
-			// these were already working as expressions:
-			"total_pages": totalPagesExpr,
-			"last_page":   totalPagesExpr,
+			"total_pages":  totalPagesExpr,
+			"last_page":    totalPagesExpr,
 			"next_page": bson.M{"$cond": []any{
 				bson.M{"$lt": []any{mh.innerPage, totalPagesExpr}},
 				mh.innerPage + 1,
@@ -352,7 +335,6 @@ func (mh *MongoDBHandler) GroupBy(field string) *MongoDBHandler {
 		},
 	}})
 
-	// applies sorting again
 	if len(mh.sort) > 0 {
 		pipeline = append(pipeline, bson.M{"$sort": mh.sort})
 	}
@@ -374,7 +356,6 @@ func toJsonBytes(data any) (string, error) {
 	return string(jsonData), nil
 }
 
-// appendTimestamps adds created_at and updated_at timestamps.
 func (mh *MongoDBHandler) appendTimestamps(data any, operation string) any {
 	if !mh.useTimestamps {
 		return data
@@ -408,7 +389,6 @@ func (mh *MongoDBHandler) appendTimestamps(data any, operation string) any {
 	return data
 }
 
-// appendTimestampForCreatedAt uses a linkedhashmap to add timestamps.
 func (mh *MongoDBHandler) appendTimestampForCreatedAt(data map[string]any) map[string]any {
 	if mh.useTimestamps {
 		jsonBytes, err := toJsonBytes(data)
@@ -427,7 +407,6 @@ func (mh *MongoDBHandler) appendTimestampForCreatedAt(data map[string]any) map[s
 	return data
 }
 
-// chunkSlice splits a slice of map[string]any into smaller slices.
 func chunkSlice(slice []map[string]any, chunkSize int) [][]map[string]any {
 	var chunks [][]map[string]any
 	for chunkSize < len(slice) {
@@ -437,7 +416,6 @@ func chunkSlice(slice []map[string]any, chunkSize int) [][]map[string]any {
 	return chunks
 }
 
-// chunkInterfaceSlice splits a slice of interfaces into chunks.
 func chunkInterfaceSlice(slice []any, chunkSize int) [][]any {
 	var chunks [][]any
 	for i := 0; i < len(slice); i += chunkSize {
@@ -450,7 +428,6 @@ func chunkInterfaceSlice(slice []any, chunkSize int) [][]any {
 	return chunks
 }
 
-// insertChunk is used internally to insert a chunk of documents concurrently.
 func (mh *MongoDBHandler) insertChunk(ctx context.Context, chunk []map[string]any, wg *sync.WaitGroup, resultCh chan<- MongoOperationsResult, errCh chan<- MongoError) {
 	defer wg.Done()
 	var interfaceSlice []any
@@ -470,14 +447,11 @@ func (mh *MongoDBHandler) insertChunk(ctx context.Context, chunk []map[string]an
 	resultCh <- mh.newMongoOperations(200, true, "insert", "Chunk insert performed.")
 }
 
-// calculateBatchSize returns a batch size based on a percentage of total records.
 func calculateBatchSize(totalRecords int, percentage float64) int {
 	batchSize := int(float64(totalRecords) * percentage / 100.0)
-	fmt.Println(batchSize)
 	return batchSize
 }
 
-// countRecords returns the number of records in data.
 func countRecords(data any) int {
 	switch d := data.(type) {
 	case []map[string]any:
@@ -491,7 +465,6 @@ func countRecords(data any) int {
 	}
 }
 
-// Insert performs an insert operation (supports map, slice of map, or slice of any).
 func (mh *MongoDBHandler) Insert(data any) (MongoOperationsResult, MongoError) {
 	if err := mh.getConnection(); err.Error != "" {
 		return MongoOperationsResult{}, err
@@ -528,6 +501,7 @@ func (mh *MongoDBHandler) Insert(data any) (MongoOperationsResult, MongoError) {
 		if err != nil {
 			return MongoOperationsResult{}, mh.newMongoError(500, err.Error())
 		}
+		return mh.newMongoOperations(200, true, "insert", "Insert performed."), MongoError{}
 	case []any:
 		chunks := chunkInterfaceSlice(d, 300)
 		var wg sync.WaitGroup
@@ -574,10 +548,8 @@ func (mh *MongoDBHandler) Insert(data any) (MongoOperationsResult, MongoError) {
 	default:
 		return MongoOperationsResult{}, mh.newMongoError(400, "unsupported data type")
 	}
-	return mh.newMongoOperations(200, true, "insert", "Insert performed."), MongoError{}
 }
 
-// DropDatabase drops an entire database.
 func (mh *MongoDBHandler) DropDatabase(dbName string) MongoError {
 	if mh.client == nil {
 		if err := mh.getConnection(); err.Error != "" {
@@ -606,7 +578,6 @@ func (mh *MongoDBHandler) DropDatabase(dbName string) MongoError {
 	return MongoError{}
 }
 
-// DropTable drops a specific collection from a database.
 func (mh *MongoDBHandler) DropTable(dbName string, collectionName string) MongoError {
 	if mh.client == nil {
 		if err := mh.getConnection(); err.Error != "" {
@@ -645,7 +616,6 @@ func (mh *MongoDBHandler) DropTable(dbName string, collectionName string) MongoE
 	return MongoError{}
 }
 
-// TotalCount returns the count of documents matching the current query.
 func (mh *MongoDBHandler) TotalCount() (int64, error) {
 	if mh.collection == nil {
 		return 0, nil
@@ -709,22 +679,16 @@ func (mh *MongoDBHandler) GroupAll(groupInput string) *MongoDBHandler {
 	return mh
 }
 
-// ExecuteRaw runs either a simple Find or an Aggregate using raw JSON.
-// aggregation is already supported, but, this does, indeed handle more stuff
-// since the query is used sent
 func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResults, MongoError) {
-	// 1) ensure connection + collection is set
 	if err := mh.getConnection(); err.Error != "" {
 		return MongoResults{}, err
 	}
 
-	// 2) parse JSON into a go value
 	var payload any
 	if err := bson.UnmarshalExtJSON([]byte(rawJSON), true, &payload); err != nil {
 		return MongoResults{}, mh.newMongoError(400, fmt.Sprintf("Invalid JSON: %s", err))
 	}
 
-	// 3) build find options for the non-pipeline branch
 	findOpts := options.Find().
 		SetLimit(int64(mh.perPage)).
 		SetSkip(int64((mh.page - 1) * mh.perPage))
@@ -732,23 +696,21 @@ func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResu
 		findOpts.SetSort(mh.sort)
 	}
 
-	// 4) execute query
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
 	var (
-		cur    *mongo.Cursor
-		err    error
-		filter any // for Find & CountDocuments
-		docs   []map[string]any
+		cur      *mongo.Cursor
+		err      error
+		filter   any
+		docs     []map[string]any
+		pipeline []any
 	)
 
 	if asPipeline {
-		// normalize payload to []any
-		var pipeline []any
 		switch arr := payload.(type) {
 		case []any:
-			pipeline = append([]any{}, arr...) // copy
+			pipeline = append([]any{}, arr...)
 		case primitive.A:
 			pipeline = make([]any, len(arr))
 			copy(pipeline, arr)
@@ -756,17 +718,14 @@ func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResu
 			return MongoResults{}, mh.newMongoError(400, "For aggregation, JSON must be an array")
 		}
 
-		// inject $sort if provided
 		if len(mh.sort) > 0 {
 			pipeline = append(pipeline, bson.M{"$sort": mh.sort})
 		}
 
-		// ensure page ≥ 1
 		if mh.page < 1 {
 			mh.page = 1
 		}
 
-		// inject $skip and $limit
 		pipeline = append(pipeline,
 			bson.M{"$skip": int64((mh.page - 1) * mh.perPage)},
 			bson.M{"$limit": int64(mh.perPage)},
@@ -774,7 +733,6 @@ func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResu
 
 		cur, err = mh.collection.Aggregate(ctx, pipeline)
 	} else {
-		// accept document filter types
 		switch f := payload.(type) {
 		case bson.M, primitive.D, map[string]any:
 			filter = f
@@ -795,7 +753,6 @@ func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResu
 		}
 	}(cur, ctx)
 
-	// 5) decode results
 	for cur.Next(ctx) {
 		var doc map[string]any
 		if err := cur.Decode(&doc); err != nil {
@@ -807,10 +764,37 @@ func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResu
 		return MongoResults{}, mh.newMongoError(500, err.Error())
 	}
 
-	// 6) count total matching docs
 	var total int64
 	if asPipeline {
-		total = int64(len(docs))
+		countPipeline := []any{}
+		if len(pipeline) > 0 {
+			for _, stage := range pipeline {
+				if m, ok := stage.(bson.M); ok {
+					if _, hasSkip := m["$skip"]; hasSkip {
+						break
+					}
+					if _, hasLimit := m["$limit"]; hasLimit {
+						break
+					}
+				}
+				countPipeline = append(countPipeline, stage)
+			}
+		}
+		countPipeline = append(countPipeline, bson.M{"$count": "total"})
+		countCur, err := mh.collection.Aggregate(ctx, countPipeline)
+		if err == nil {
+			defer countCur.Close(ctx)
+			type countRes struct {
+				Total int64 `bson:"total"`
+			}
+			var cr countRes
+			if countCur.Next(ctx) {
+				countCur.Decode(&cr)
+				total = cr.Total
+			}
+		} else {
+			total = int64(len(docs))
+		}
 	} else {
 		total, err = mh.collection.CountDocuments(ctx, filter)
 		if err != nil {
@@ -818,7 +802,6 @@ func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResu
 		}
 	}
 
-	// getting the query in a readable format
 	var buf bytes.Buffer
 	var compactQ string
 	if err := json.Compact(&buf, []byte(rawJSON)); err != nil {
@@ -827,7 +810,6 @@ func (mh *MongoDBHandler) ExecuteRaw(rawJSON string, asPipeline bool) (MongoResu
 		compactQ = buf.String()
 	}
 
-	// 7) wrap into MongoResults
 	totalPages := int((total + int64(mh.perPage) - 1) / int64(mh.perPage))
 	return MongoResults{
 		Status:   true,
@@ -861,117 +843,6 @@ func maxInt(a, b int) int {
 	return b
 }
 
-// Find executes either a simple find query or an aggregate pipeline (if built) and applies pagination.
-// keeping it here as the next approach could be buggyg
-//func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
-//	if mh.client == nil {
-//		if err := mh.getConnection(); err.Error != "" {
-//			return MongoResults{}, err
-//		}
-//	}
-//
-//	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-//	defer cancel()
-//
-//	// Validate pagination parameters.
-//	if mh.page < 1 {
-//		mh.page = 1
-//	}
-//	if mh.perPage <= 0 {
-//		mh.perPage = 10
-//	}
-//
-//	opts := options.Find().SetCollation(&options.Collation{
-//		Locale:   "en",
-//		Strength: 2,
-//	})
-//	if len(mh.sort) > 0 {
-//		opts.SetSort(mh.sort)
-//	}
-//	opts.SetLimit(int64(mh.perPage))
-//	opts.SetSkip(int64((mh.page - 1) * mh.perPage))
-//
-//	resultsChan := make(chan []map[string]any, 1)
-//	errChan := make(chan error, 1)
-//
-//	go func() {
-//		var cur *mongo.Cursor
-//		var err error
-//		if len(mh.aggregateQuery) > 0 {
-//			mh.logger.Println("Running aggregate query...")
-//			cur, err = mh.collection.Aggregate(ctx, mh.aggregateQuery)
-//		} else {
-//			mh.logger.Println("Running filter query...")
-//			cur, err = mh.collection.Find(ctx, mh.query, opts)
-//		}
-//		if err != nil {
-//			errChan <- err
-//			return
-//		}
-//		defer func(cur *mongo.Cursor, ctx context.Context) {
-//			err := cur.Close(ctx)
-//			if err != nil {
-//				mh.logger.Println("Error closing cursor")
-//			}
-//		}(cur, ctx)
-//
-//		var results []map[string]any
-//		for cur.Next(ctx) {
-//			var result map[string]any
-//			if err := cur.Decode(&result); err != nil {
-//				errChan <- err
-//				return
-//			}
-//			results = append(results, result)
-//		}
-//		if err := cur.Err(); err != nil {
-//			errChan <- err
-//			return
-//		}
-//		resultsChan <- results
-//	}()
-//
-//	select {
-//	case err := <-errChan:
-//		return MongoResults{}, mh.newMongoError(500, err.Error())
-//	case <-time.After(5 * time.Second):
-//		return MongoResults{}, mh.newMongoError(500, "Timeout while fetching results")
-//	case results := <-resultsChan:
-//		totalCount, err := mh.TotalCount()
-//		if err != nil {
-//			return MongoResults{}, mh.newMongoError(500, err.Error())
-//		}
-//		totalPages := (int(totalCount) + mh.perPage - 1) / mh.perPage
-//		currentPage := mh.page
-//		prevPage := 1
-//		nextPage := 1
-//		if currentPage > 1 {
-//			prevPage = currentPage - 1
-//		}
-//		if currentPage < totalPages {
-//			nextPage = currentPage + 1
-//		}
-//		plainQuery, _ := mh.Query()
-//		return MongoResults{
-//			Status:   true,
-//			Code:     200,
-//			Database: mh.dbName,
-//			Table:    mh.tableName,
-//			Count:    totalCount,
-//			Results:  results,
-//			Pagination: MongoResultPagination{
-//				TotalPages:  totalPages,
-//				CurrentPage: currentPage,
-//				NextPage:    nextPage,
-//				PrevPage:    prevPage,
-//				LastPage:    totalPages,
-//				PerPage:     mh.perPage,
-//			},
-//			Query: plainQuery,
-//		}, MongoError{}
-//	}
-//}
-
 func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 	if mh.client == nil {
 		if err := mh.getConnection(); err.Error != "" {
@@ -979,7 +850,6 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 		}
 	}
 
-	// normalize pagination
 	if mh.page < 1 {
 		mh.page = 1
 	}
@@ -990,9 +860,6 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	// ---------------------------------------------------
-	// 1) Regular filtering
-	// ---------------------------------------------------
 	if len(mh.aggregateQuery) == 0 {
 		opts := options.Find().
 			SetCollation(&options.Collation{Locale: "en", Strength: 2}).
@@ -1074,17 +941,11 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 		}
 	}
 
-	// ---------------------------------------------------
-	// 2) Grouped‐by branch: uses 2 goroutines -> count and match
-	// ---------------------------------------------------
-	// build count pipeline
 	countPipe := []bson.M{}
 	if len(mh.query) > 0 {
 		countPipe = append(countPipe, bson.M{"$match": mh.query})
 	}
-	// mh.aggregateQuery already contains match, group, sort, skip, limit
-	// but for counting we only need match + group + count:
-	// extract group stage:
+
 	groupStage := mh.aggregateQuery[0].(bson.M)
 
 	for _, stage := range mh.aggregateQuery {
@@ -1127,7 +988,6 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 		cntCh <- cr
 	}()
 
-	// build data pipeline (reuse mh.aggregateQuery)
 	dataCh := make(chan []map[string]any, 1)
 	go func() {
 		cur, err := mh.collection.Aggregate(ctx, mh.aggregateQuery)
@@ -1154,7 +1014,6 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 		dataCh <- buckets
 	}()
 
-	// wait for both
 	var (
 		cntRes countResult
 		data   []map[string]any
@@ -1203,7 +1062,6 @@ func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
 	}, MongoError{}
 }
 
-// Update performs an update based on the current query.
 func (mh *MongoDBHandler) Update(data any) (MongoOperationsResult, MongoError) {
 	if mh.client == nil {
 		if err := mh.getConnection(); err.Error != "" {
@@ -1227,7 +1085,6 @@ func (mh *MongoDBHandler) Update(data any) (MongoOperationsResult, MongoError) {
 	return mh.newMongoOperations(200, true, "update", "Update performed"), MongoError{}
 }
 
-// newMongoOperations creates a new operations result.
 func (mh *MongoDBHandler) newMongoOperations(code int, status bool, operation string, message string) MongoOperationsResult {
 	query, _ := mh.Query()
 	return MongoOperationsResult{
@@ -1241,7 +1098,6 @@ func (mh *MongoDBHandler) newMongoOperations(code int, status bool, operation st
 	}
 }
 
-// UpdateByID updates a document by its _id.
 func (mh *MongoDBHandler) UpdateByID(recordId string, data any) (MongoOperationsResult, MongoError) {
 	if mh.client == nil {
 		if err := mh.getConnection(); err.Error != "" {
@@ -1280,7 +1136,6 @@ func (mh *MongoDBHandler) UpdateByID(recordId string, data any) (MongoOperations
 	return mh.newMongoOperations(200, true, "updateById", "Update performed"), MongoError{}
 }
 
-// FindById retrieves a document by its _id.
 func (mh *MongoDBHandler) FindById(recordId string) (SingleMongoResult, MongoError) {
 	if mh.client == nil {
 		if err := mh.getConnection(); err.Error != "" {
@@ -1292,7 +1147,7 @@ func (mh *MongoDBHandler) FindById(recordId string) (SingleMongoResult, MongoErr
 	var filter bson.M
 	var result bson.M
 	var err error
-	// Try to treat recordId as an ObjectID.
+
 	if objID, errObj := primitive.ObjectIDFromHex(recordId); errObj == nil {
 		filter = bson.M{"_id": objID}
 		err = mh.collection.FindOne(ctx, filter).Decode(&result)
@@ -1315,7 +1170,7 @@ func (mh *MongoDBHandler) FindById(recordId string) (SingleMongoResult, MongoErr
 			}, MongoError{}
 		}
 	}
-	// Otherwise, treat recordId as a string.
+
 	filter = bson.M{"_id": recordId}
 	err = mh.collection.FindOne(ctx, filter).Decode(&result)
 	if err != nil {
@@ -1339,7 +1194,6 @@ func (mh *MongoDBHandler) FindById(recordId string) (SingleMongoResult, MongoErr
 	}, MongoError{}
 }
 
-// DeleteById removes a document by its _id.
 func (mh *MongoDBHandler) DeleteById(recordId string) (MongoOperationsResult, MongoError) {
 	if mh.client == nil {
 		if err := mh.getConnection(); err.Error != "" {
@@ -1369,7 +1223,6 @@ func (mh *MongoDBHandler) DeleteById(recordId string) (MongoOperationsResult, Mo
 	return mh.newMongoOperations(200, true, "deleteById", "Delete operation performed."), MongoError{}
 }
 
-// Delete performs deletion based on the current query.
 func (mh *MongoDBHandler) Delete() (MongoOperationsResult, MongoError) {
 	if mh.client == nil {
 		if err := mh.getConnection(); err.Error != "" {
@@ -1386,10 +1239,9 @@ func (mh *MongoDBHandler) Delete() (MongoOperationsResult, MongoError) {
 	if err != nil {
 		return mh.newMongoOperations(500, false, "delete", "Error deleting: "+err.Error()), MongoError{}
 	}
-	return mh.newMongoOperations(200, false, "delete", "Document(s) deleted"), MongoError{}
+	return mh.newMongoOperations(200, true, "delete", "Document(s) deleted"), MongoError{}
 }
 
-// Query returns the current query filter as a JSON string.
 func (mh *MongoDBHandler) Query() (string, error) {
 	if len(mh.aggregateQuery) > 0 {
 		jsonData, err := json.Marshal(mh.aggregateQuery)
@@ -1501,7 +1353,7 @@ func (mh *MongoDBHandler) Count() (CountMongoResult, MongoError) {
 		}
 		countPipe = append(countPipe, m)
 	}
-	// Append the final count stage
+
 	countPipe = append(countPipe, bson.M{"$count": "total"})
 
 	cursor, err := mh.collection.Aggregate(ctx, countPipe)
@@ -1544,7 +1396,6 @@ func (mh *MongoDBHandler) Count() (CountMongoResult, MongoError) {
 	}, MongoError{}
 }
 
-// ResetQuery clears the current query filter and aggregation pipeline.
 func (mh *MongoDBHandler) ResetQuery() *MongoDBHandler {
 	mh.aggregateQuery = []any{}
 	mh.query = make(map[string]any)
@@ -1552,13 +1403,11 @@ func (mh *MongoDBHandler) ResetQuery() *MongoDBHandler {
 	return mh
 }
 
-// ResetSort clears any sorting settings.
 func (mh *MongoDBHandler) ResetSort() *MongoDBHandler {
 	mh.sort = []primitive.E{}
 	return mh
 }
 
-// ResetState clears the current query and sort but leaves the DB/table names intact.
 func (mh *MongoDBHandler) ResetState() *MongoDBHandler {
 	mh.query = make(map[string]any)
 	mh.sort = []primitive.E{}
@@ -1576,3 +1425,116 @@ func (mh *MongoDBHandler) newMongoError(code int, errMsg string) MongoError {
 		Query:    queryStr,
 	}
 }
+
+// older implementation for Find
+// I left it here just in case I ever need to do stuff with it
+// Find executes either a simple find query or an aggregate pipeline (if built) and applies pagination.
+// keeping it here as the next approach could be buggyg
+//func (mh *MongoDBHandler) Find() (MongoResults, MongoError) {
+//	if mh.client == nil {
+//		if err := mh.getConnection(); err.Error != "" {
+//			return MongoResults{}, err
+//		}
+//	}
+//
+//	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+//	defer cancel()
+//
+//	// Validate pagination parameters.
+//	if mh.page < 1 {
+//		mh.page = 1
+//	}
+//	if mh.perPage <= 0 {
+//		mh.perPage = 10
+//	}
+//
+//	opts := options.Find().SetCollation(&options.Collation{
+//		Locale:   "en",
+//		Strength: 2,
+//	})
+//	if len(mh.sort) > 0 {
+//		opts.SetSort(mh.sort)
+//	}
+//	opts.SetLimit(int64(mh.perPage))
+//	opts.SetSkip(int64((mh.page - 1) * mh.perPage))
+//
+//	resultsChan := make(chan []map[string]any, 1)
+//	errChan := make(chan error, 1)
+//
+//	go func() {
+//		var cur *mongo.Cursor
+//		var err error
+//		if len(mh.aggregateQuery) > 0 {
+//			mh.logger.Println("Running aggregate query...")
+//			cur, err = mh.collection.Aggregate(ctx, mh.aggregateQuery)
+//		} else {
+//			mh.logger.Println("Running filter query...")
+//			cur, err = mh.collection.Find(ctx, mh.query, opts)
+//		}
+//		if err != nil {
+//			errChan <- err
+//			return
+//		}
+//		defer func(cur *mongo.Cursor, ctx context.Context) {
+//			err := cur.Close(ctx)
+//			if err != nil {
+//				mh.logger.Println("Error closing cursor")
+//			}
+//		}(cur, ctx)
+//
+//		var results []map[string]any
+//		for cur.Next(ctx) {
+//			var result map[string]any
+//			if err := cur.Decode(&result); err != nil {
+//				errChan <- err
+//				return
+//			}
+//			results = append(results, result)
+//		}
+//		if err := cur.Err(); err != nil {
+//			errChan <- err
+//			return
+//		}
+//		resultsChan <- results
+//	}()
+//
+//	select {
+//	case err := <-errChan:
+//		return MongoResults{}, mh.newMongoError(500, err.Error())
+//	case <-time.After(5 * time.Second):
+//		return MongoResults{}, mh.newMongoError(500, "Timeout while fetching results")
+//	case results := <-resultsChan:
+//		totalCount, err := mh.TotalCount()
+//		if err != nil {
+//			return MongoResults{}, mh.newMongoError(500, err.Error())
+//		}
+//		totalPages := (int(totalCount) + mh.perPage - 1) / mh.perPage
+//		currentPage := mh.page
+//		prevPage := 1
+//		nextPage := 1
+//		if currentPage > 1 {
+//			prevPage = currentPage - 1
+//		}
+//		if currentPage < totalPages {
+//			nextPage = currentPage + 1
+//		}
+//		plainQuery, _ := mh.Query()
+//		return MongoResults{
+//			Status:   true,
+//			Code:     200,
+//			Database: mh.dbName,
+//			Table:    mh.tableName,
+//			Count:    totalCount,
+//			Results:  results,
+//			Pagination: MongoResultPagination{
+//				TotalPages:  totalPages,
+//				CurrentPage: currentPage,
+//				NextPage:    nextPage,
+//				PrevPage:    prevPage,
+//				LastPage:    totalPages,
+//				PerPage:     mh.perPage,
+//			},
+//			Query: plainQuery,
+//		}, MongoError{}
+//	}
+//}

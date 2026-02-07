@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -13,30 +14,26 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-func ToString(v interface{}) string {
+func ToString(v any) string {
 	return fmt.Sprint(v)
 }
 
 func foundInList(input string, list []string) bool {
 	if len(list) > 0 {
-		for _, v := range list {
-			if v == input {
-				return true
-			}
+		if slices.Contains(list, input) {
+			return true
 		}
 	}
 	return false
 }
 
-func convertStringToType(value string) interface{} {
+func convertStringToType(value string) any {
 	val := strings.ToLower(strings.TrimSpace(value))
 
-	// Handle null
 	if val == "null" {
 		return nil
 	}
 
-	// Handle boolean
 	if val == "true" {
 		return true
 	}
@@ -44,164 +41,44 @@ func convertStringToType(value string) interface{} {
 		return false
 	}
 
-	// Handle integer
 	if int64Val, err := strconv.ParseInt(value, 10, 64); err == nil {
-		// Heuristic: use int if in 32-bit range
 		if int64Val <= int64(^uint32(0)>>1) {
 			return int(int64Val)
 		}
 		return int64Val
 	}
 
-	// Handle float
 	if floatVal, err := strconv.ParseFloat(value, 64); err == nil {
 		return floatVal
 	}
 
-	// Handle RFC3339 datetime (e.g. 2025-07-21T12:00:00Z)
 	if t, err := time.Parse(time.RFC3339, value); err == nil {
 		return t
 	}
 
-	// Handle Unix timestamp (seconds or milliseconds)
 	if ts, err := strconv.ParseInt(value, 10, 64); err == nil {
 		if ts > 1e12 {
-			// Milliseconds
 			return time.UnixMilli(ts)
 		}
-		// Seconds
 		return time.Unix(ts, 0)
 	}
 
-	// Handle ObjectID (for MongoDB `_id` or similar fields)
 	if oid, err := primitive.ObjectIDFromHex(value); err == nil {
 		return oid
 	}
 
-	// Handle arrays or JSON objects
-	var jsonResult interface{}
+	var jsonResult any
 	if err := json.Unmarshal([]byte(value), &jsonResult); err == nil {
 		return jsonResult
 	}
 
-	// Return as string fallback
 	return value
 }
-
-//func ParseQuery(queryString string, autoConvertTypes bool) [][]interface{} {
-//	operators := []string{
-//		"=",
-//		"!=",
-//		"<>",
-//		"<",
-//		"<=",
-//		">",
-//		">=",
-//		"like",
-//		"_like_",
-//		"_i_like_",
-//		"not_like",
-//		"ilike",
-//		"&",
-//		"|",
-//		"^",
-//		"<<",
-//		">>",
-//		"rlike",
-//		"regexp",
-//		"not_regexp",
-//		"exists",
-//		"type",
-//		"mod",
-//		"where",
-//		"all",
-//		"size",
-//		"regex",
-//		"not_regex",
-//		"text",
-//		"slice",
-//		"elemmatch",
-//		"geowithin",
-//		"geointersects",
-//		"near",
-//		"nearsphere",
-//		"geometry",
-//		"maxdistance",
-//		"center",
-//		"centersphere",
-//		"box",
-//		"polygon",
-//		"uniquedocs",
-//		"between",
-//	}
-//
-//	var parsed [][]interface{}
-//
-//	// only removing the outer brackets
-//	if strings.HasPrefix(queryString, "[") && strings.HasSuffix(queryString, "]") {
-//		queryString = queryString[1 : len(queryString)-1]
-//	}
-//
-//	if strings.Contains(queryString, "|") {
-//		items := strings.Split(queryString, "|")
-//		if len(items) > 0 {
-//			for _, item := range items {
-//				parts := strings.Split(item, ",")
-//				if len(parts) == 3 {
-//					key := strings.TrimSpace(ToString(parts[0]))
-//					operator := strings.TrimSpace(ToString(parts[1]))
-//					value := strings.TrimSpace(ToString(parts[2]))
-//
-//					if foundInList(operator, operators) {
-//						if operator == "between" {
-//							value = strings.ReplaceAll(value, "[", "")
-//							value = strings.ReplaceAll(value, "]", "")
-//							betweenParts := strings.Split(value, ":")
-//							if len(betweenParts) == 2 {
-//								low := convertStringToType(strings.TrimSpace(betweenParts[0]))
-//								high := convertStringToType(strings.TrimSpace(betweenParts[1]))
-//								parsed = append(parsed, []interface{}{key, operator, []interface{}{low, high}})
-//							}
-//						} else {
-//							operator = strings.ReplaceAll(operator, "_", "")
-//							parsed = append(parsed, []interface{}{key, operator, convertStringToType(value)})
-//						}
-//					}
-//				}
-//			}
-//		}
-//	} else {
-//		parts := strings.Split(queryString, ",")
-//		if len(parts) == 3 {
-//			key := strings.TrimSpace(ToString(parts[0]))
-//			operator := strings.TrimSpace(ToString(parts[1]))
-//			value := strings.TrimSpace(ToString(parts[2]))
-//
-//			if foundInList(operator, operators) {
-//				if operator == "between" {
-//					value = strings.ReplaceAll(value, "[", "")
-//					value = strings.ReplaceAll(value, "]", "")
-//					betweenParts := strings.Split(value, ":")
-//					if len(betweenParts) == 2 {
-//						low := convertStringToType(strings.TrimSpace(betweenParts[0]))
-//						high := convertStringToType(strings.TrimSpace(betweenParts[1]))
-//						parsed = append(parsed, []interface{}{key, operator, []interface{}{low, high}})
-//					}
-//				} else {
-//					operator = strings.ReplaceAll(operator, "_", "")
-//					parsed = append(parsed, []interface{}{key, operator, convertStringToType(value)})
-//				}
-//			}
-//		}
-//	}
-//
-//	return parsed
-//}
 
 // will process the value
 // applying auto-conversion
 // if specifically stated or not
-func processValue(raw string, autoConversion bool) interface{} {
+func processValue(raw string, autoConversion bool) any {
 	raw = strings.TrimSpace(raw)
 
 	useAutoConvert := autoConversion
@@ -224,7 +101,7 @@ func processValue(raw string, autoConversion bool) interface{} {
 	return raw
 
 }
-func ParseQuery(queryString string, autoConvertTypes bool) [][]interface{} {
+func ParseQuery(queryString string, autoConvertTypes bool) [][]any {
 	operators := []string{
 		"=", "!=", "<>", "<", "<=", ">", ">=",
 		"like", "_like_", "_i_like_", "not_like", "ilike",
@@ -239,14 +116,12 @@ func ParseQuery(queryString string, autoConvertTypes bool) [][]interface{} {
 		"uniquedocs", "between",
 	}
 
-	var parsed [][]interface{}
+	var parsed [][]any
 
-	// strip outer brackets if present
 	if strings.HasPrefix(queryString, "[") && strings.HasSuffix(queryString, "]") {
 		queryString = queryString[1 : len(queryString)-1]
 	}
 
-	// split on "|" for multiple clauses
 	clauses := []string{queryString}
 	if strings.Contains(queryString, "|") {
 		clauses = strings.Split(queryString, "|")
@@ -267,27 +142,25 @@ func ParseQuery(queryString string, autoConvertTypes bool) [][]interface{} {
 		}
 
 		if op == "between" {
-			// between expects "[low:high]" or "low:high"
 			cleaned := strings.Trim(raw, "[]")
 			endpoints := strings.SplitN(cleaned, ":", 2)
 			if len(endpoints) == 2 {
 				low := processValue(endpoints[0], autoConvertTypes)
 				high := processValue(endpoints[1], autoConvertTypes)
-				parsed = append(parsed, []interface{}{key, op, []interface{}{low, high}})
+				parsed = append(parsed, []any{key, op, []any{low, high}})
 			}
 		} else {
-			// normalize op (e.g. "_like_" -> "like")
 			op = strings.ReplaceAll(op, "_", "")
 			val := processValue(raw, autoConvertTypes)
-			parsed = append(parsed, []interface{}{key, op, val})
+			parsed = append(parsed, []any{key, op, val})
 		}
 	}
 
 	return parsed
 }
 
-func ParseSort(queryString string) [][]interface{} {
-	var parsed [][]interface{}
+func ParseSort(queryString string) [][]any {
+	var parsed [][]any
 	if strings.HasPrefix(queryString, "[") && strings.HasSuffix(queryString, "]") {
 		queryString = strings.ReplaceAll(queryString, "[", "")
 		queryString = strings.ReplaceAll(queryString, "]", "")
@@ -296,36 +169,32 @@ func ParseSort(queryString string) [][]interface{} {
 			items := strings.Split(queryString, "|")
 			if len(items) > 0 {
 				for _, item := range items {
-					// support for [field_name: desc]
 					if strings.Contains(item, ":") {
 						parts := strings.Split(item, ":")
 						if len(parts) == 2 {
-							parsed = append(parsed, []interface{}{parts[0], parts[1]})
+							parsed = append(parsed, []any{parts[0], parts[1]})
 						}
 					}
-					// support for [field_name, desc]
 					if strings.Contains(item, ",") {
 						parts := strings.Split(item, ",")
 						if len(parts) == 2 {
-							parsed = append(parsed, []interface{}{parts[0], parts[1]})
+							parsed = append(parsed, []any{parts[0], parts[1]})
 						}
 					}
 				}
 			}
 		} else {
-			// support for [field_name: desc]
 			if strings.Contains(queryString, ":") {
 				parts := strings.Split(queryString, ":")
 				if len(parts) == 2 {
-					parsed = append(parsed, []interface{}{parts[0], parts[1]})
+					parsed = append(parsed, []any{parts[0], parts[1]})
 				}
 			}
 
-			// support for [field_name, desc]
 			if strings.Contains(queryString, ",") {
 				parts := strings.Split(queryString, ",")
 				if len(parts) == 2 {
-					parsed = append(parsed, []interface{}{parts[0], parts[1]})
+					parsed = append(parsed, []any{parts[0], parts[1]})
 				}
 			}
 		}
@@ -335,8 +204,8 @@ func ParseSort(queryString string) [][]interface{} {
 	return nil
 }
 
-func ConvertJsonToData(jsonInput string) (interface{}, error) {
-	var result interface{}
+func ConvertJsonToData(jsonInput string) (any, error) {
+	var result any
 	err := json.Unmarshal([]byte(jsonInput), &result)
 	if err != nil {
 		return nil, errors.New("the input string is not a valid JSON")
@@ -344,8 +213,8 @@ func ConvertJsonToData(jsonInput string) (interface{}, error) {
 	return result, nil
 }
 
-func ConvertJsonToMap(jsonInput string) (map[string]interface{}, error) {
-	var result map[string]interface{}
+func ConvertJsonToMap(jsonInput string) (map[string]any, error) {
+	var result map[string]any
 	err := json.Unmarshal([]byte(jsonInput), &result)
 	if err != nil {
 		return nil, errors.New("the input string is not a valid JSON")
@@ -353,7 +222,7 @@ func ConvertJsonToMap(jsonInput string) (map[string]interface{}, error) {
 	return result, nil
 }
 
-func ConvertMapToJsonOrdered(m map[string]interface{}) (string, error) {
+func ConvertMapToJsonOrdered(m map[string]any) (string, error) {
 
 	om := omap.NewOrderedMap()
 	for key, value := range m {
@@ -365,7 +234,6 @@ func ConvertMapToJsonOrdered(m map[string]interface{}) (string, error) {
 		return "", fmt.Errorf("error converting ordered map to JSON: %v", err)
 	}
 
-	// Convert JSON bytes to string and return
 	return string(jsonBytes), nil
 }
 
@@ -377,7 +245,7 @@ func AppendCreatedAtToJson(jsonStr string) bson.D {
 	om.AddPair("updated_at", now)
 
 	var result bson.D
-	om.ForEach(func(key string, value interface{}) {
+	om.ForEach(func(key string, value any) {
 		result = append(result, bson.E{Key: key, Value: value})
 	})
 	return result
@@ -390,7 +258,7 @@ func AppendUpdatedAtToJson(jsonStr string) bson.D {
 	om.AddPair("updated_at", now)
 
 	var result bson.D
-	om.ForEach(func(key string, value interface{}) {
+	om.ForEach(func(key string, value any) {
 		result = append(result, bson.E{Key: key, Value: value})
 	})
 	return result
@@ -439,7 +307,6 @@ func MapOperators(operator string, value any) (any, error) {
 		"polygon":       bson.M{"$polygon": value},
 		"uniquedocs":    bson.M{"$uniqueDocs": value},
 	}
-	// Special handling for "between".
 	if operator == "between" {
 		v, ok := value.([]any)
 		if !ok || len(v) != 2 {
@@ -453,3 +320,116 @@ func MapOperators(operator string, value any) (any, error) {
 	}
 	return mappedValue, nil
 }
+
+// older implementation
+// i left it here in case I need to
+// go back to it, although, probably not
+//func ParseQuery(queryString string, autoConvertTypes bool) [][]any {
+//	operators := []string{
+//		"=",
+//		"!=",
+//		"<>",
+//		"<",
+//		"<=",
+//		">",
+//		">=",
+//		"like",
+//		"_like_",
+//		"_i_like_",
+//		"not_like",
+//		"ilike",
+//		"&",
+//		"|",
+//		"^",
+//		"<<",
+//		">>",
+//		"rlike",
+//		"regexp",
+//		"not_regexp",
+//		"exists",
+//		"type",
+//		"mod",
+//		"where",
+//		"all",
+//		"size",
+//		"regex",
+//		"not_regex",
+//		"text",
+//		"slice",
+//		"elemmatch",
+//		"geowithin",
+//		"geointersects",
+//		"near",
+//		"nearsphere",
+//		"geometry",
+//		"maxdistance",
+//		"center",
+//		"centersphere",
+//		"box",
+//		"polygon",
+//		"uniquedocs",
+//		"between",
+//	}
+//
+//	var parsed [][]any
+//
+//	// only removing the outer brackets
+//	if strings.HasPrefix(queryString, "[") && strings.HasSuffix(queryString, "]") {
+//		queryString = queryString[1 : len(queryString)-1]
+//	}
+//
+//	if strings.Contains(queryString, "|") {
+//		items := strings.Split(queryString, "|")
+//		if len(items) > 0 {
+//			for _, item := range items {
+//				parts := strings.Split(item, ",")
+//				if len(parts) == 3 {
+//					key := strings.TrimSpace(ToString(parts[0]))
+//					operator := strings.TrimSpace(ToString(parts[1]))
+//					value := strings.TrimSpace(ToString(parts[2]))
+//
+//					if foundInList(operator, operators) {
+//						if operator == "between" {
+//							value = strings.ReplaceAll(value, "[", "")
+//							value = strings.ReplaceAll(value, "]", "")
+//							betweenParts := strings.Split(value, ":")
+//							if len(betweenParts) == 2 {
+//								low := convertStringToType(strings.TrimSpace(betweenParts[0]))
+//								high := convertStringToType(strings.TrimSpace(betweenParts[1]))
+//								parsed = append(parsed, []any{key, operator, []any{low, high}})
+//							}
+//						} else {
+//							operator = strings.ReplaceAll(operator, "_", "")
+//							parsed = append(parsed, []any{key, operator, convertStringToType(value)})
+//						}
+//					}
+//				}
+//			}
+//		}
+//	} else {
+//		parts := strings.Split(queryString, ",")
+//		if len(parts) == 3 {
+//			key := strings.TrimSpace(ToString(parts[0]))
+//			operator := strings.TrimSpace(ToString(parts[1]))
+//			value := strings.TrimSpace(ToString(parts[2]))
+//
+//			if foundInList(operator, operators) {
+//				if operator == "between" {
+//					value = strings.ReplaceAll(value, "[", "")
+//					value = strings.ReplaceAll(value, "]", "")
+//					betweenParts := strings.Split(value, ":")
+//					if len(betweenParts) == 2 {
+//						low := convertStringToType(strings.TrimSpace(betweenParts[0]))
+//						high := convertStringToType(strings.TrimSpace(betweenParts[1]))
+//						parsed = append(parsed, []any{key, operator, []any{low, high}})
+//					}
+//				} else {
+//					operator = strings.ReplaceAll(operator, "_", "")
+//					parsed = append(parsed, []any{key, operator, convertStringToType(value)})
+//				}
+//			}
+//		}
+//	}
+//
+//	return parsed
+//}
